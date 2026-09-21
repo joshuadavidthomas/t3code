@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Toolchains and dependencies are restored from the snapshot. There are no
+# shared databases or authenticated services to reconnect; never install here.
+echo '[orb resume] Cached toolchain ready; start dev servers on demand.'

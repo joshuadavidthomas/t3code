@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+repo_root="$PWD"
+TIMEFORMAT='[orb setup] %R seconds'
+
+echo '[orb setup] Checking native build and Electron prerequisites'
+packages=(build-essential python3 pkg-config libsecret-1-dev libwayland-dev
+  libgtk-3-0 libnss3 libasound2 libgbm1 imagemagick)
+missing=()
+for package in "${packages[@]}"; do
+  if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" != 'install ok installed' ]]; then
+    missing+=("$package")
+  fi
+done
+if ((${#missing[@]})); then
+  time sudo apt-get update -qq
+  time sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+fi
+
+echo '[orb setup] Installing repository toolchain versions'
+tools="$HOME/.local/share/t3-orb"
+# Use the minimum Node version in the repository's engine range, not the orb's Node.
+node_version=$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).engines.node.replace(/^\^/, "")')
+package_manager=$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).packageManager')
+if [[ ! -x "$tools/bin/node" ]] || [[ "$("$tools/bin/node" --version)" != "v$node_version" ]]; then
+  time npm install --global --prefix "$tools" "node@$node_version"
+fi
+export PATH="$tools/bin:$HOME/.local/share/vite-plus/bin:$HOME/.cargo/bin:$PATH"
+if [[ ! -x "$tools/bin/pnpm" ]] || [[ "$("$tools/bin/pnpm" --version)" != "${package_manager#pnpm@}" ]]; then
+  time npm install --global --prefix "$tools" "$package_manager"
+fi
+
+export VP_BIN_DIR="$HOME/.local/share/vite-plus/bin"
+export VP_DATA_DIR="$HOME/.local/share/vite-plus"
+export VP_CACHE_DIR="$HOME/.cache/vite-plus"
+vp_version=$(sed -n 's/^  vite-plus: //p' pnpm-workspace.yaml)
+installer=$(mktemp)
+trap 'rm -f "$installer"' EXIT
+if [[ ! -x "$VP_BIN_DIR/vp" ]] || [[ "$("$VP_BIN_DIR/vp" --version)" != "vp v$vp_version"$'\n'* ]]; then
+  curl -fsSL https://vite.plus -o "$installer"
+  time VP_VERSION="$vp_version" VP_NODE_MANAGER=no bash "$installer"
+fi
+
+# CI uses Rust stable; retain an installed stable toolchain on warm snapshots.
+if ! command -v rustup >/dev/null; then
+  curl -fsSL https://sh.rustup.rs -o "$installer"
+  time sh "$installer" -y --no-modify-path --profile minimal --default-toolchain stable
+fi
+if ! rustup run stable rustc --version >/dev/null 2>&1; then
+  time rustup toolchain install stable --profile minimal
+fi
+rustup default stable
+time rustup component add rustfmt
+
+# Amp and supervised services start in separate login shells. Scope the toolchain
+# and disposable T3 state to this checkout, without modifying the orb's system Node.
+marker='# T3 Code orb environment'
+if ! grep -Fqx "$marker" "$HOME/.bash_profile" 2>/dev/null; then
+  cat >> "$HOME/.bash_profile" <<EOF
+
+$marker
+case "\$PWD/" in
+  "$repo_root/"*)
+    export PATH="$tools/bin:$VP_BIN_DIR:$HOME/.cargo/bin:\$PATH"
+    export VP_BIN_DIR="$VP_BIN_DIR"
+    export VP_DATA_DIR="$VP_DATA_DIR"
+    export VP_CACHE_DIR="$VP_CACHE_DIR"
+    export T3CODE_HOME="$repo_root/.t3"
+    ;;
+esac
+EOF
+fi
+
+echo '[orb setup] Installing locked workspace dependencies'
+time CI=true vp install --frozen-lockfile
+echo '[orb setup] Ensuring Electron runtime'
+time vp run --filter @t3tools/desktop ensure:electron
+echo '[orb setup] Warming web dependency cache'
+time node apps/web/scripts/warm-dep-cache.ts
+echo '[orb setup] Fetching locked Rust dependencies'
+for crate in resource-monitor kde-snap-shot hyprland-snap-shot; do
+  time cargo fetch --locked --manifest-path "native/$crate/Cargo.toml"
+done
+echo '[orb setup] Ready (cloud credentials and dev servers are intentionally not configured)'
