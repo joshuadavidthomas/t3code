@@ -1164,7 +1164,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
               const option = runtimeModeConfig[mode];
               const OptionIcon = option.icon;
               return (
-                <SelectItem key={mode} value={mode} hideIndicator className="min-w-64 py-2">
+                <SelectItem key={mode} value={mode} hideIndicator className="min-w-64">
                   <div className="flex min-w-0 items-center gap-3">
                     <div className="grid min-w-0 flex-1 gap-0.5">
                       <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
@@ -6569,10 +6569,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                     </span>
                                   }
                                 />
-                                <TooltipPopup
-                                  side="top"
-                                  className="max-w-64 whitespace-normal leading-tight"
-                                >
+                                <TooltipPopup side="top">
                                   Draft attachment could not be saved locally and may be lost on
                                   navigation.
                                 </TooltipPopup>
@@ -6604,12 +6601,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 >
                                   <RefreshIcon />
                                 </TooltipTrigger>
-                                <TooltipPopup
-                                  side="top"
-                                  className="max-w-64 whitespace-normal leading-tight"
-                                >
-                                  {upload.reason}
-                                </TooltipPopup>
+                                <TooltipPopup side="top">{upload.reason}</TooltipPopup>
                               </Tooltip>
                             )}
                             <Button
@@ -6704,12 +6696,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               >
                                 <RefreshIcon />
                               </TooltipTrigger>
-                              <TooltipPopup
-                                side="top"
-                                className="max-w-64 whitespace-normal leading-tight"
-                              >
-                                {upload.reason}
-                              </TooltipPopup>
+                              <TooltipPopup side="top">{upload.reason}</TooltipPopup>
                             </Tooltip>
                           )}
                           <Button
@@ -6787,12 +6774,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               >
                                 <RefreshIcon />
                               </TooltipTrigger>
-                              <TooltipPopup
-                                side="top"
-                                className="max-w-64 whitespace-normal leading-tight"
-                              >
-                                {upload.reason}
-                              </TooltipPopup>
+                              <TooltipPopup side="top">{upload.reason}</TooltipPopup>
                             </Tooltip>
                           ) : null}
                           <Button
