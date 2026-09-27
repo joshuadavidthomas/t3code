@@ -1,13 +1,15 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
+  AuthStandardClientScopes,
   type AuthSessionState,
   type SandboxSubmission,
 } from "@t3tools/contracts";
 import { CloudIcon, EllipsisIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { useConnectSandboxDestination } from "../useSandbox";
+import { SANDBOX_PAIRING_SCOPE_MESSAGE, useConnectSandboxDestination } from "../useSandbox";
 import { environmentCatalog } from "~/connection/catalog";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { isElectron } from "~/env";
@@ -26,6 +28,20 @@ export function canOperateSandboxResources(
 ) {
   if (environment.entry.target._tag === "PrimaryConnectionTarget" && isElectron) return true;
   return session?.authenticated === true && session.scopes?.includes(AuthOrchestrationOperateScope);
+}
+
+/** Pairing mints a standard client credential on the sandbox, like host pairing links. */
+export function canPairSandboxDestinations(
+  environment: EnvironmentPresentation,
+  session: Pick<AuthSessionState, "authenticated" | "scopes"> | null,
+) {
+  if (environment.entry.target._tag === "PrimaryConnectionTarget" && isElectron) return true;
+  return (
+    session?.authenticated === true &&
+    [AuthAccessWriteScope, ...AuthStandardClientScopes].every((scope) =>
+      session.scopes?.includes(scope),
+    )
+  );
 }
 
 export function sandboxResourceStatus(submission: SandboxSubmission) {
@@ -73,6 +89,7 @@ function SandboxOwnerResources({
       ? primarySession.data
       : remoteSession.data;
   const canOperate = canOperateSandboxResources(environment, session);
+  const canPair = canPairSandboxDestinations(environment, session);
   const connectDestination = useConnectSandboxDestination();
   const retry = useAtomCommand(serverEnvironment.retrySandboxSubmission, { reportFailure: false });
   const cancel = useAtomCommand(serverEnvironment.cancelSandboxSubmission, {
@@ -146,6 +163,11 @@ function SandboxOwnerResources({
       const commandId = submission.input.commandId;
       const busy = pending !== null;
       const done = submission.progress.phase === "done" && submission.destination !== null;
+      const connectable =
+        done &&
+        !environments.some(
+          (entry) => entry.environmentId === submission.destination?.environmentId,
+        );
       return (
         <div
           key={commandId}
@@ -161,14 +183,14 @@ function SandboxOwnerResources({
                   : "truncate text-xs text-muted-foreground"
               }
             >
-              {errors[commandId] || sandboxResourceStatus(submission)}
+              {errors[commandId] ||
+                (connectable && !canPair
+                  ? SANDBOX_PAIRING_SCOPE_MESSAGE
+                  : sandboxResourceStatus(submission))}
             </p>
           </div>
           <div className="flex items-center gap-1">
-            {done &&
-            !environments.some(
-              (entry) => entry.environmentId === submission.destination?.environmentId,
-            ) ? (
+            {connectable && canPair ? (
               <Button
                 size="sm"
                 variant="outline"

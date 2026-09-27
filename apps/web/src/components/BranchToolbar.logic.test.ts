@@ -6,6 +6,7 @@ import {
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
   resolveCurrentWorkspaceLabel,
+  isSelectingBranchBase,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveEnvModeLabel,
@@ -107,6 +108,42 @@ describe("resolvePreviousWorktreeLabel", () => {
     expect(resolvePreviousWorktreeLabel({ branch: null, worktreePath: "/wt" })).toBe(
       "Previous worktree",
     );
+  });
+});
+
+describe("isSelectingBranchBase", () => {
+  const base = { envLocked: false, activeWorktreePath: null, sandboxDraft: false } as const;
+
+  it("only chooses a base for a sandbox draft, even in local mode", () => {
+    expect(isSelectingBranchBase({ ...base, effectiveEnvMode: "local", sandboxDraft: true })).toBe(
+      true,
+    );
+  });
+
+  it("checks out locally for an ordinary local draft", () => {
+    expect(isSelectingBranchBase({ ...base, effectiveEnvMode: "local" })).toBe(false);
+  });
+
+  it("chooses a base for a new worktree but not an attached one", () => {
+    expect(isSelectingBranchBase({ ...base, effectiveEnvMode: "worktree" })).toBe(true);
+    expect(
+      isSelectingBranchBase({
+        ...base,
+        effectiveEnvMode: "worktree",
+        activeWorktreePath: "/repo/.t3/worktrees/a",
+      }),
+    ).toBe(false);
+  });
+
+  it("never selects once the environment is locked", () => {
+    expect(
+      isSelectingBranchBase({
+        ...base,
+        effectiveEnvMode: "local",
+        envLocked: true,
+        sandboxDraft: true,
+      }),
+    ).toBe(false);
   });
 });
 

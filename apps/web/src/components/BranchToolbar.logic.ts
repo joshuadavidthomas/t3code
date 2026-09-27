@@ -183,6 +183,20 @@ export function resolveEffectiveEnvMode(input: {
   return activeWorktreePath || preparingWorktree ? "worktree" : "local";
 }
 
+/**
+ * Picking a branch for a new worktree or a sandbox only chooses its base; the
+ * sandbox clones that published branch. Neither checks out the local repo.
+ */
+export function isSelectingBranchBase(input: {
+  effectiveEnvMode: EnvMode;
+  envLocked: boolean;
+  activeWorktreePath: string | null;
+  sandboxDraft: boolean;
+}): boolean {
+  if (input.envLocked) return false;
+  return input.sandboxDraft || (input.effectiveEnvMode === "worktree" && !input.activeWorktreePath);
+}
+
 export function resolveDraftEnvModeAfterBranchChange(input: {
   nextWorktreePath: string | null;
   currentWorktreePath: string | null;

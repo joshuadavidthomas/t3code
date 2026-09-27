@@ -297,6 +297,7 @@ interface TimelineRowSharedState {
   onOpenAgents: () => void;
   onCancelWorktreeSetup: (() => void) | null;
   onRetryWorktreeSetup: (() => void) | null;
+  onDiscardWorktreeSetup: (() => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   onSteerQueuedMessage: (id: string) => void;
@@ -413,6 +414,7 @@ interface MessagesTimelineProps {
   worktreeSetup?: WorktreeSetupSnapshot | null;
   onCancelWorktreeSetup?: () => void;
   onRetryWorktreeSetup?: () => void;
+  onDiscardWorktreeSetup?: () => void;
   onWorktreeSetupWorkLocally?: () => void;
   onOpenWorktreeSetupTerminal?: (terminalId: string) => void;
   listRef: React.RefObject<LegendListRef | null>;
@@ -484,6 +486,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   worktreeSetup = null,
   onCancelWorktreeSetup,
   onRetryWorktreeSetup,
+  onDiscardWorktreeSetup,
   onWorktreeSetupWorkLocally,
   onOpenWorktreeSetupTerminal,
   isPreparingWorktree = false,
@@ -1175,6 +1178,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenAgents,
       onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
       onRetryWorktreeSetup: onRetryWorktreeSetup ?? null,
+      onDiscardWorktreeSetup: onDiscardWorktreeSetup ?? null,
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
       onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
       onSteerQueuedMessage,
@@ -1212,6 +1216,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenAgents,
       onCancelWorktreeSetup,
       onRetryWorktreeSetup,
+      onDiscardWorktreeSetup,
       onWorktreeSetupWorkLocally,
       onOpenWorktreeSetupTerminal,
       onSteerQueuedMessage,
@@ -1776,6 +1781,7 @@ function WorktreeSetupTimelineRow({
       embedded={row.embedded}
       onCancel={row.embedded ? null : ctx.onCancelWorktreeSetup}
       onRetry={row.embedded ? null : ctx.onRetryWorktreeSetup}
+      onDiscard={row.embedded ? null : ctx.onDiscardWorktreeSetup}
       onWorkLocally={
         !row.embedded && row.snapshot.phase === "running" ? ctx.onWorktreeSetupWorkLocally : null
       }

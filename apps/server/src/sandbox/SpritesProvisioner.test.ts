@@ -181,6 +181,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     const operations: string[] = [];
     const uploads: string[] = [];
     const controlScripts: string[] = [];
+    const deployments: string[] = [];
     let mismatch = true;
     const client: SpritesClient = {
       find: () => Effect.succeed(null),
@@ -201,6 +202,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
         }),
       exec: (_name, script, input) =>
         Effect.sync(() => {
+          if (script.includes("sandbox-runtime.json")) deployments.push(input);
           if (script.includes("sandbox-runtime-manifest"))
             return encode(mismatch ? { ...runtime, id: "wrong" } : runtime);
           if (script.includes("/api/sandbox/runtime")) return encode(runtime);
@@ -242,6 +244,8 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     expect((yield* resources.get(submission.input.commandId)).destination).toEqual(destination);
     expect(operations).toEqual(["upload", "upload", "service", "public", "intake"]);
     expect(controlScripts).toHaveLength(1);
+    expect(deployments).toHaveLength(1);
+    expect(deployments[0]).toContain(`"label":${encode(submission.input.title)}`);
     expect(controlScripts[0]).toContain("auth session issue");
     expect(controlScripts[0]).toContain("--replace-active");
     expect(controlScripts[0]).toContain("flock 9");

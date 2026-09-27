@@ -28,6 +28,8 @@ interface WorktreeSetupCardProps {
   /** Interrupts the server-side bootstrap. Hidden once the setup has settled. */
   onCancel: (() => void) | null;
   onRetry?: (() => void) | null;
+  /** Drops a failed draft setup along with its prompt. */
+  onDiscard?: (() => void) | null;
   /** Restarts the same message in the project checkout instead of a worktree. */
   onWorkLocally: (() => void) | null;
   /** Reveals the setup script terminal tab. Null when no script ran. */
@@ -339,6 +341,7 @@ export function WorktreeSetupCard({
   snapshot,
   onCancel,
   onRetry,
+  onDiscard,
   onWorkLocally,
   onOpenTerminal,
   embedded = false,
@@ -432,6 +435,11 @@ export function WorktreeSetupCard({
         {onRetry && snapshot.phase === "failed" ? (
           <Button type="button" size="xs" variant="ghost-muted" onClick={onRetry}>
             Retry
+          </Button>
+        ) : null}
+        {onDiscard && snapshot.phase === "failed" ? (
+          <Button type="button" size="xs" variant="ghost-muted" onClick={onDiscard}>
+            Discard
           </Button>
         ) : null}
         {onCancel && running ? (

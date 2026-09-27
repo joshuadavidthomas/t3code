@@ -183,6 +183,26 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
     }),
   );
 
+  it.effect("labels a sandbox destination with its deployment label instead of the host name", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-label-test-",
+      });
+      const { stateDir } = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+      yield* fileSystem.makeDirectory(stateDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${stateDir}/sandbox-runtime.json`,
+        `{"artifactIntegrity":"sha256-${"a".repeat(64)}","workspaceRoot":"/workspace","label":"Fix the login flow"}`,
+      );
+      const descriptor = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
+      expect(descriptor.label).toBe("Fix the login flow");
+    }),
+  );
+
   it.effect("does not offer sandbox configuration from a sandbox destination", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

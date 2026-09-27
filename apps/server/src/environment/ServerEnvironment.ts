@@ -190,7 +190,8 @@ export const make = Effect.gen(function* () {
   const hostArchitecture = yield* HostProcessArchitecture;
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const sandboxDeployment = yield* readSandboxDeployment.pipe(Effect.orElseSucceed(() => null));
+  const label = sandboxDeployment?.label ?? (yield* resolveServerEnvironmentLabel({ cwdBaseName }));
   const machine = yield* detectServerEnvironmentMachineKind();
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
@@ -204,8 +205,7 @@ export const make = Effect.gen(function* () {
   const desktopAppUpdate =
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
   // A sandbox destination doesn't launch further sandboxes.
-  const sandboxDestination =
-    (yield* readSandboxDeployment.pipe(Effect.orElseSucceed(() => null))) !== null;
+  const sandboxDestination = sandboxDeployment !== null;
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,

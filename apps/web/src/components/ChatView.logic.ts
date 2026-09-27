@@ -1384,3 +1384,15 @@ export function restorePlanFollowUpComposer(input: {
     detectTrigger: true,
   });
 }
+
+/**
+ * A sandbox launches from the draft's own project when it lives on the owner
+ * environment; the logical project list keeps only one project per environment.
+ */
+export function resolveSandboxSourceProject<
+  C extends { readonly environmentId: string; readonly projectId: string },
+  T extends { readonly environmentId: string; readonly projectId: string },
+>(current: C | null, candidates: readonly T[], ownerEnvironmentId: string): C | T | null {
+  if (current?.environmentId === ownerEnvironmentId) return current;
+  return candidates.find((candidate) => candidate.environmentId === ownerEnvironmentId) ?? null;
+}

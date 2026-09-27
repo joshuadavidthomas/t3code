@@ -88,6 +88,7 @@ import {
   shouldWriteThreadErrorToCurrentServerThread,
   waitForRevertedMessage,
   prepareRevertedMessageAttachments,
+  resolveSandboxSourceProject,
 } from "./ChatView.logic";
 
 describe("agent browser close confirmation", () => {
@@ -2428,5 +2429,20 @@ describe("worktree setup visibility", () => {
       ...settledDone,
       sequence: 9,
     });
+  });
+});
+
+describe("resolveSandboxSourceProject", () => {
+  const first = { environmentId: "host", projectId: "first-checkout" };
+  const second = { environmentId: "host", projectId: "second-checkout" };
+  const remote = { environmentId: "remote", projectId: "remote-checkout" };
+
+  it("keeps the draft's own checkout when it is on the sandbox owner", () => {
+    expect(resolveSandboxSourceProject(second, [first, remote], "host")).toBe(second);
+  });
+
+  it("falls back to the owner's project when the draft is elsewhere", () => {
+    expect(resolveSandboxSourceProject(remote, [first, remote], "host")).toBe(first);
+    expect(resolveSandboxSourceProject(null, [remote], "host")).toBeNull();
   });
 });

@@ -128,6 +128,7 @@ runtime/t3 sandbox-runtime-manifest --artifact-integrity ${quote(selectedArtifac
         const deployment = yield* encodeJson({
           artifactIntegrity: selectedArtifact.runtime.artifactIntegrity,
           workspaceRoot: WORKSPACE,
+          label: submission.input.title.slice(0, 200),
         }).pipe(Effect.mapError(() => failure("Invalid sandbox deployment.")));
         yield* exec(
           `set -eu

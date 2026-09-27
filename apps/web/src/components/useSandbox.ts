@@ -1,12 +1,14 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type {
-  CommandId,
-  EnvironmentId,
-  SandboxDestination,
-  SandboxSubmission,
-  SandboxSubmissionUpdate,
-  SandboxSubmitInput,
+import {
+  EnvironmentAuthorizationError,
+  type CommandId,
+  type EnvironmentId,
+  type SandboxDestination,
+  type SandboxSubmission,
+  type SandboxSubmissionUpdate,
+  type SandboxSubmitInput,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { createElement, useCallback, useEffect, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 
@@ -164,6 +166,10 @@ export function useSandboxSubmission(draftId: DraftId | null, setup: SandboxDraf
   };
 }
 
+export const SANDBOX_PAIRING_SCOPE_MESSAGE =
+  "Connecting requires the access:write scope for this backend.";
+const isAuthorizationError = Schema.is(EnvironmentAuthorizationError);
+
 /** Pairs to a finished sandbox and waits for its connection, stopping early once `isCurrent` fails. */
 export function useConnectSandboxDestination() {
   const pair = useAtomCommand(serverEnvironment.pairSandboxDestination, { reportFailure: false });
@@ -182,7 +188,12 @@ export function useConnectSandboxDestination() {
       const paired = await pair({ environmentId: ownerEnvironmentId, input: { commandId } });
       if (!isCurrent()) return { _tag: "Stale" };
       if (paired._tag === "Failure")
-        return { _tag: "Failed", message: "Sandbox is ready, but connecting failed." };
+        return {
+          _tag: "Failed",
+          message: isAuthorizationError(squashAtomCommandFailure(paired))
+            ? SANDBOX_PAIRING_SCOPE_MESSAGE
+            : "Sandbox is ready, but connecting failed.",
+        };
       const connected = await connect({
         host: paired.value.url,
         pairingCode: paired.value.pairingToken,

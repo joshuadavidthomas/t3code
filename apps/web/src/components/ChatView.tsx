@@ -106,6 +106,8 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
+import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
+import { isDraftDiscardLocked } from "./Sidebar.logic";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -482,6 +484,7 @@ import {
   codexArtifactTemplatePromptToAppend,
   waitForStartedServerThread,
   shouldRefocusComposerOnWindowFocus,
+  resolveSandboxSourceProject,
 } from "./ChatView.logic";
 import type { ThreadSyncPhase } from "../threadSync";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -1661,6 +1664,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
   );
@@ -3961,8 +3965,12 @@ export default function ChatView(props: ChatViewProps) {
   const onSandboxChange = useCallback(
     (target: NonNullable<typeof sandboxTarget>) => {
       if (envLocked || !draftId) return;
-      const source = logicalProjectEnvironments.find(
-        (environment) => environment.environmentId === target.ownerEnvironmentId,
+      const source = resolveSandboxSourceProject(
+        activeProject
+          ? { environmentId: activeProject.environmentId, projectId: activeProject.id }
+          : null,
+        logicalProjectEnvironments,
+        target.ownerEnvironmentId,
       );
       if (!source) return;
       setDraftThreadContext(draftId, {
@@ -3976,6 +3984,7 @@ export default function ChatView(props: ChatViewProps) {
       setMultipleModelSelections(null);
     },
     [
+      activeProject,
       draftId,
       envLocked,
       logicalProjectEnvironments,
@@ -10096,6 +10105,15 @@ export default function ChatView(props: ChatViewProps) {
                   ? {
                       onRetryWorktreeSetup: () => {
                         void sandboxSubmission.retry();
+                      },
+                    }
+                  : {})}
+                {...(draftId && sandboxSetup && !isDraftDiscardLocked(sandboxSetup)
+                  ? {
+                      // Same as the sidebar's discard; the draft route redirects home once it's gone.
+                      onDiscardWorktreeSetup: () => {
+                        releaseComposerDraftUploads(draftId);
+                        clearDraftThread(draftId);
                       },
                     }
                   : {})}

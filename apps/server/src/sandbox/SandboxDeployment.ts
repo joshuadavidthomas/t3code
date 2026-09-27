@@ -8,6 +8,8 @@ import { ServerConfig } from "../config.ts";
 export const SandboxDeployment = Schema.Struct({
   artifactIntegrity: Schema.String.check(Schema.isPattern(/^sha256-[a-f0-9]{64}$/)),
   workspaceRoot: Schema.String.check(Schema.isMinLength(1)),
+  /** The launching thread's title; the host name of a sandbox means nothing to users. */
+  label: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
 
 const decodeDeployment = Schema.decodeUnknownEffect(Schema.fromJsonString(SandboxDeployment));

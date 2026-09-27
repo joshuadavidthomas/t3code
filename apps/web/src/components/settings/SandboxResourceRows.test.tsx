@@ -1,5 +1,7 @@
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
+  AuthStandardClientScopes,
   EnvironmentId,
   type SandboxSubmission,
 } from "@t3tools/contracts";
@@ -52,6 +54,7 @@ vi.mock("../ui/menu", () => ({
 import {
   SandboxResourceRows,
   canOperateSandboxResources,
+  canPairSandboxDestinations,
   sandboxResourceStatus,
 } from "./SandboxResourceRows";
 
@@ -69,6 +72,21 @@ describe("sandbox resource actions", () => {
       canOperateSandboxResources(environment, {
         authenticated: true,
         scopes: [AuthOrchestrationOperateScope],
+      } as never),
+    ).toBe(true);
+  });
+
+  it("only offers pairing to sessions that may mint standard client credentials", () => {
+    expect(
+      canPairSandboxDestinations(environment, {
+        authenticated: true,
+        scopes: [...AuthStandardClientScopes],
+      } as never),
+    ).toBe(false);
+    expect(
+      canPairSandboxDestinations(environment, {
+        authenticated: true,
+        scopes: [AuthAccessWriteScope, ...AuthStandardClientScopes],
       } as never),
     ).toBe(true);
   });
