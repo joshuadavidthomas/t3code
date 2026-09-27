@@ -396,6 +396,7 @@ interface ProviderInstanceCardProps {
   readonly onRunUpdate?: (() => void) | undefined;
   readonly onInstallRecommended?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly statusLabel?: string | undefined;
 }
 
 /**
@@ -439,6 +440,7 @@ export function ProviderInstanceCard({
   onRunUpdate,
   onInstallRecommended,
   isUpdating = false,
+  statusLabel,
 }: ProviderInstanceCardProps) {
   const enabled = resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
@@ -448,9 +450,11 @@ export function ProviderInstanceCard({
     ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
     : "disabled";
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
-  const summary = enabled
-    ? getProviderSummary(liveProvider)
-    : { headline: "Disabled", detail: null };
+  const summary = statusLabel
+    ? { headline: statusLabel, detail: null }
+    : enabled
+      ? getProviderSummary(liveProvider)
+      : { headline: "Disabled", detail: null };
   const authEmail = liveProvider?.auth.email?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
   const authLabel =

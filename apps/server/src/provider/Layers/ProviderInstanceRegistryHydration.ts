@@ -48,7 +48,9 @@ import {
   ServerSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -103,36 +105,51 @@ export const deriveProviderInstanceConfigMap = (
   return merged as ProviderInstanceConfigMap;
 };
 
-/**
- * Layer that consumes `ProviderInstanceRegistryMutator` and forks a
- * settings-watcher fiber. The fiber's lifetime is tied to the enclosing
- * layer scope (process lifetime in production), so it is interrupted on
- * shutdown without leaking.
- *
- * Errors inside the watcher are logged and swallowed — the registry's own
- * "unavailable" bucket already absorbs unknown drivers and invalid
- * configs, so the only way the watcher could fail is a settings stream
- * tear-down, which logs and exits cleanly.
- */
-const SettingsWatcherLive = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const mutator = yield* ProviderInstanceRegistryMutator;
-    const serverSettings = yield* ServerSettingsService;
-    const settingsChanges = yield* serverSettings.subscribeChanges;
-    yield* settingsChanges.pipe(
-      Stream.runForEach((next) =>
-        mutator
-          .reconcile(deriveProviderInstanceConfigMap(next))
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
-            ),
+/** Save settings and await registry reconciliation. Callers must still check
+ * whether their selected instance was constructed or marked unavailable. */
+export class ProviderInstanceRegistryHydration extends Context.Service<
+  ProviderInstanceRegistryHydration,
+  Pick<ServerSettingsService["Service"], "updateSettings">
+>()("t3/provider/Layers/ProviderInstanceRegistryHydration") {}
+
+export const makeSettingsHydration = Effect.gen(function* () {
+  const mutator = yield* ProviderInstanceRegistryMutator;
+  const serverSettings = yield* ServerSettingsService;
+  const lock = yield* Semaphore.make(1);
+  const settingsChanges = yield* serverSettings.subscribeChanges;
+  yield* settingsChanges.pipe(
+    Stream.runForEach(() =>
+      lock
+        .withPermits(1)(
+          serverSettings.getSettings.pipe(
+            Effect.flatMap((next) => mutator.reconcile(deriveProviderInstanceConfigMap(next))),
           ),
+        )
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
+          ),
+        ),
+    ),
+    Effect.forkScoped,
+  );
+  return {
+    // The watcher reads current settings under this same lock, so a queued
+    // older notification cannot undo a synchronously applied replacement.
+    // Once acquired, finish publishing replacement instances even if the
+    // requester disconnects; waiting for the lock remains interruptible.
+    updateSettings: (patch) =>
+      lock.withPermits(1)(
+        Effect.gen(function* () {
+          const next = yield* serverSettings.updateSettings(patch);
+          yield* mutator.reconcile(deriveProviderInstanceConfigMap(next));
+          return next;
+        }).pipe(Effect.uninterruptible),
       ),
-      Effect.forkScoped,
-    );
-  }),
-);
+  } satisfies ProviderInstanceRegistryHydration["Service"];
+});
+
+const SettingsWatcherLive = Layer.effect(ProviderInstanceRegistryHydration, makeSettingsHydration);
 
 /**
  * Hydrate `ProviderInstanceRegistry` from `ServerSettings` and keep it in
@@ -151,7 +168,7 @@ const SettingsWatcherLive = Layer.effectDiscard(
  * it, so the visibility leak is harmless in practice.
  */
 export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
-  ProviderInstanceRegistry,
+  ProviderInstanceRegistry | ProviderInstanceRegistryHydration,
   never,
   BuiltInDriversEnv | ServerSettingsService
 > = Layer.unwrap(
@@ -172,4 +189,8 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
 
     return SettingsWatcherLive.pipe(Layer.provideMerge(mutableLayer));
   }),
-) as Layer.Layer<ProviderInstanceRegistry, never, BuiltInDriversEnv | ServerSettingsService>;
+) as Layer.Layer<
+  ProviderInstanceRegistry | ProviderInstanceRegistryHydration,
+  never,
+  BuiltInDriversEnv | ServerSettingsService
+>;

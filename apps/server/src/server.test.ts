@@ -136,6 +136,9 @@ import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
+import { ProviderInstanceRegistryHydration } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
+import { SandboxConfigurations } from "./sandbox/SandboxConfiguration.ts";
+import { SandboxSubmissions } from "./sandbox/SandboxSubmissions.ts";
 import {
   AntigravityInstallation,
   AntigravityInstallationError,
@@ -827,6 +830,12 @@ const buildAppUnderTest = (options?: {
             getInstance: () => Effect.undefined,
             listInstances: Effect.succeed([]),
             ...options?.layers?.providerInstanceRegistry,
+          }),
+          Layer.mock(ProviderInstanceRegistryHydration)({}),
+          Layer.mock(SandboxConfigurations)({}),
+          Layer.mock(SandboxSubmissions)({}),
+          Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({
+            getEnvironmentId: Effect.succeed(testEnvironmentDescriptor.environmentId),
           }),
           Layer.mock(AntigravityInstallation)({
             managedDirectory: "unused-test-antigravity-runtime",
@@ -4590,6 +4599,49 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(rpcError._tag, "EnvironmentAuthorizationError");
       if (rpcError._tag === "EnvironmentAuthorizationError") {
         assert.equal(rpcError.requiredScope, "orchestration:read");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("only pairs sandbox destinations for callers holding every delegated scope", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const pairWithScope = (scope: string) =>
+        Effect.gen(function* () {
+          const { body: tokenBody } = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+            scope,
+          });
+          const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+            headers: { authorization: `Bearer ${tokenBody.access_token ?? ""}` },
+          });
+          const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+          const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+          return yield* Effect.flip(
+            Effect.scoped(
+              withWsRpcClient(wsUrl, (client) =>
+                client[WS_METHODS.sandboxPairDestination]({
+                  commandId: CommandId.make("sandbox-pair-scope"),
+                }),
+              ),
+            ),
+          );
+        });
+
+      const withoutAccessWrite = yield* pairWithScope(
+        "orchestration:read orchestration:operate terminal:operate review:write relay:read",
+      );
+      const withoutTerminal = yield* pairWithScope(
+        "orchestration:read orchestration:operate review:write relay:read access:write",
+      );
+
+      assert.equal(withoutAccessWrite._tag, "EnvironmentAuthorizationError");
+      if (withoutAccessWrite._tag === "EnvironmentAuthorizationError") {
+        assert.equal(withoutAccessWrite.requiredScope, "access:write");
+      }
+      assert.equal(withoutTerminal._tag, "EnvironmentAuthorizationError");
+      if (withoutTerminal._tag === "EnvironmentAuthorizationError") {
+        assert.equal(withoutTerminal.requiredScope, "terminal:operate");
       }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

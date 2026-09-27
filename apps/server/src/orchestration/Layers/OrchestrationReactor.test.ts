@@ -16,6 +16,7 @@ import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 import { StorageCleanup } from "../../storageCleanup.ts";
+import { SpriteActivityHold } from "../../sandbox/SpriteActivityHold.ts";
 
 describe("OrchestrationReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<OrchestrationReactor, never> | null = null;
@@ -106,6 +107,15 @@ describe("OrchestrationReactor", () => {
           }),
         ),
         Layer.provideMerge(
+          Layer.succeed(SpriteActivityHold, {
+            start: () => {
+              started.push("sprite-activity-hold");
+              return Effect.void;
+            },
+            drain: Effect.void,
+          }),
+        ),
+        Layer.provideMerge(
           Layer.succeed(AgentAwarenessRelay.AgentAwarenessRelay, {
             publishThread: () => Effect.void,
             requestCatchUp: () => Effect.void,
@@ -132,6 +142,7 @@ describe("OrchestrationReactor", () => {
       "pull-request-sync-reactor",
       "agent-awareness-relay",
       "storage-cleanup",
+      "sprite-activity-hold",
     ]);
 
     await Effect.runPromise(Scope.close(scope, Exit.void));

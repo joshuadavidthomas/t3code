@@ -18,6 +18,15 @@ export const WorktreeSetupStageId = Schema.Literals([
   "submodules",
   "setup-script",
   "agent",
+  "source",
+  "create",
+  "runtime",
+  "server",
+  "clone",
+  // No longer emitted; kept so earlier sandbox setup snapshots still decode.
+  "credentials",
+  "connect",
+  "project",
 ]);
 export type WorktreeSetupStageId = typeof WorktreeSetupStageId.Type;
 
@@ -49,6 +58,7 @@ export const WorktreeSetupPhase = Schema.Literals(["running", "done", "failed", 
 export type WorktreeSetupPhase = typeof WorktreeSetupPhase.Type;
 
 export const WorktreeSetupSnapshot = Schema.Struct({
+  kind: Schema.optionalKey(Schema.Literals(["worktree", "sandbox"])),
   threadId: ThreadId,
   phase: WorktreeSetupPhase,
   startedAt: IsoDateTime,
@@ -111,6 +121,22 @@ export const WORKTREE_SETUP_STAGE_ORDER: ReadonlyArray<WorktreeSetupStageId> = [
 
 export function worktreeSetupStageLabel(id: WorktreeSetupStageId): string {
   switch (id) {
+    case "source":
+      return "Prepare project source";
+    case "create":
+      return "Create sandbox";
+    case "runtime":
+      return "Install runtime";
+    case "server":
+      return "Start T3 server";
+    case "clone":
+      return "Clone repository";
+    case "credentials":
+      return "Create connection credentials";
+    case "connect":
+      return "Connect environment";
+    case "project":
+      return "Register project";
     case "fetch":
       return "Fetch base branch";
     case "checkout":

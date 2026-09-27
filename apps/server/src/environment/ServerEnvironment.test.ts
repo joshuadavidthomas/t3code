@@ -183,6 +183,28 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
     }),
   );
 
+  it.effect("does not offer sandbox configuration from a sandbox destination", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-test-",
+      });
+      const describe = Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
+
+      expect((yield* describe).capabilities.sandboxConfiguration).toBe(true);
+      const { stateDir } = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+      yield* fileSystem.makeDirectory(stateDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${stateDir}/sandbox-runtime.json`,
+        `{"artifactIntegrity":"sha256-${"a".repeat(64)}","workspaceRoot":"/workspace"}`,
+      );
+      expect((yield* describe).capabilities.sandboxConfiguration).toBeUndefined();
+    }),
+  );
+
   it.effect("reports agent activity publishing from the current secret state", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

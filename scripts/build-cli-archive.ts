@@ -16,6 +16,8 @@
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "node:crypto";
+import * as NodeUtil from "node:util";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -25,6 +27,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -33,6 +36,11 @@ import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import rootPackageJson from "../package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
+import {
+  ORCHESTRATION_PROTOCOL_VERSION,
+  SANDBOX_INTAKE_VERSION,
+  SandboxRuntimeManifest,
+} from "@t3tools/contracts";
 
 import {
   createStagePatchedDependencies,
@@ -91,6 +99,104 @@ export class CliArchiveInputMissingError extends Schema.TaggedError<CliArchiveIn
   }
 }
 
+export class CliArchiveSandboxRuntimeError extends Schema.TaggedError<CliArchiveSandboxRuntimeError>()(
+  "CliArchiveSandboxRuntimeError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return `Invalid sandbox runtime artifact: ${this.detail}`;
+  }
+}
+
+/** Hashes an archive without loading it into memory. */
+export const sha256File = Effect.fn("sha256File")(function* (filename: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const hash = NodeCrypto.createHash("sha256");
+  yield* fs
+    .stream(filename)
+    .pipe(Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))));
+  return hash.digest("hex");
+});
+
+const decodeSandboxRuntimeManifest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(SandboxRuntimeManifest),
+);
+
+export const validateSandboxRuntimeManifest = Effect.fn("validateSandboxRuntimeManifest")(
+  function* (json: string, artifactIntegrity: string, expected?: SandboxRuntimeManifest) {
+    const manifest = yield* decodeSandboxRuntimeManifest(json).pipe(
+      Effect.mapError(
+        (cause) =>
+          new CliArchiveSandboxRuntimeError({ detail: `invalid manifest: ${String(cause)}` }),
+      ),
+    );
+    if (manifest.artifactIntegrity !== artifactIntegrity) {
+      return yield* new CliArchiveSandboxRuntimeError({
+        detail: `artifact integrity mismatch (expected ${artifactIntegrity}, got ${manifest.artifactIntegrity})`,
+      });
+    }
+    if (manifest.orchestrationProtocol !== ORCHESTRATION_PROTOCOL_VERSION) {
+      return yield* new CliArchiveSandboxRuntimeError({
+        detail: "orchestration protocol mismatch",
+      });
+    }
+    if (manifest.intakeVersion !== SANDBOX_INTAKE_VERSION) {
+      return yield* new CliArchiveSandboxRuntimeError({
+        detail: "sandbox intake version mismatch",
+      });
+    }
+    if (
+      manifest.providers.length === 0 ||
+      manifest.providers.some((provider) => provider.models.length === 0)
+    ) {
+      return yield* new CliArchiveSandboxRuntimeError({ detail: "provider catalog is empty" });
+    }
+    if (expected && !NodeUtil.isDeepStrictEqual(manifest, expected)) {
+      return yield* new CliArchiveSandboxRuntimeError({
+        detail: "runtime manifest disagrees with the sidecar",
+      });
+    }
+    return manifest;
+  },
+);
+
+export const readSandboxRuntimeManifest = Effect.fn("readSandboxRuntimeManifest")(
+  function* (input: {
+    readonly executable: string;
+    readonly artifactIntegrity: string;
+    readonly expected?: SandboxRuntimeManifest;
+    readonly cwd: string;
+    readonly env?: Record<string, string>;
+  }) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make(
+        input.executable,
+        ["sandbox-runtime-manifest", "--artifact-integrity", input.artifactIntegrity],
+        { cwd: input.cwd, ...(input.env ? { env: input.env, extendEnv: false } : {}) },
+      ),
+    );
+    const collect = <E>(stream: Stream.Stream<Uint8Array, E>) =>
+      stream.pipe(
+        Stream.decodeText(),
+        Stream.runFold(
+          () => "",
+          (text, chunk) => text + chunk,
+        ),
+      );
+    const [stdout, stderr, exitCode] = yield* Effect.all(
+      [collect(child.stdout), collect(child.stderr), child.exitCode.pipe(Effect.map(Number))],
+      { concurrency: "unbounded" },
+    );
+    if (exitCode !== 0) {
+      return yield* new CliArchiveSandboxRuntimeError({
+        detail: `manifest command exited with ${String(exitCode)}: ${stderr}`,
+      });
+    }
+    return yield* validateSandboxRuntimeManifest(stdout, input.artifactIntegrity, input.expected);
+  },
+);
+
 /** Platform/arch pair as it appears in archive names and `process.platform`/`process.arch`. */
 export function cliArchivePlatformKey(platform: BuildPlatform, arch: BuildArch): string {
   const nodePlatform = platform === "mac" ? "darwin" : platform === "win" ? "win32" : "linux";
@@ -105,6 +211,10 @@ export function cliArchiveFileName(version: string, platform: BuildPlatform, arc
   // gzip rather than xz: GNU tar needs an external xz binary for -J, which
   // minimal hosts lack, while every tar (and Node's zlib) handles gzip alone.
   return `${cliArchiveStem(version, platform, arch)}.${platform === "win" ? "zip" : "tar.gz"}`;
+}
+
+export function sandboxRuntimeSidecarFileName(version: string): string {
+  return `${cliArchiveFileName(version, "linux", "x64")}.sandbox.json`;
 }
 
 /** The bsdtar Windows ships in System32; resolves regardless of which tar is first on PATH. */
@@ -462,6 +572,7 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   readonly version: string;
   readonly outputDir: string;
   readonly resourceMonitorDir: Option.Option<string>;
+  readonly sandboxRuntime: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -479,7 +590,19 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   // The unsuffixed host build is only a valid stand-in when it was built for
   // this platform and architecture; otherwise a missing target must fail.
   const hostPlatform = yield* HostProcessPlatform;
-  const hostKey = `${hostPlatform === "win32" ? "win" : hostPlatform}-${yield* HostProcessArchitecture}`;
+  const hostArch = yield* HostProcessArchitecture;
+  if (
+    input.sandboxRuntime &&
+    (input.platform !== "linux" ||
+      input.arch !== "x64" ||
+      hostPlatform !== "linux" ||
+      hostArch !== "x64")
+  ) {
+    return yield* new CliArchiveSandboxRuntimeError({
+      detail: "--sandbox-runtime requires a Linux x64 same-host build",
+    });
+  }
+  const hostKey = `${hostPlatform === "win32" ? "win" : hostPlatform}-${hostArch}`;
   const builtExecutable = (yield* fs.exists(targetExecutable))
     ? targetExecutable
     : targetKey === hostKey
@@ -560,6 +683,18 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     );
   }
   const stat = yield* fs.stat(archivePath);
+  if (input.sandboxRuntime) {
+    const artifactIntegrity = `sha256-${yield* sha256File(archivePath)}`;
+    const manifest = yield* readSandboxRuntimeManifest({
+      executable: executablePath,
+      artifactIntegrity,
+      cwd: contentDir,
+    });
+    yield* fs.writeFileString(
+      `${archivePath}.sandbox.json`,
+      `${yield* encodeJsonString(manifest)}\n`,
+    );
+  }
   yield* Effect.log(`[cli-archive] Wrote ${archivePath} (${String(stat.size)} bytes).`);
   return archivePath;
 });
@@ -579,6 +714,7 @@ const command = Command.make(
       ),
       Flag.optional,
     ),
+    sandboxRuntime: Flag.Boolean("sandbox-runtime").pipe(Flag.withDefault(false)),
   },
   (input) => buildCliArchive(input).pipe(Effect.scoped),
 ).pipe(Command.withDescription("Package the t3 single-executable into a per-platform archive."));

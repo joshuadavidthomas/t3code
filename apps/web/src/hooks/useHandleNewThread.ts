@@ -190,6 +190,7 @@ export function useNewThreadHandler() {
       // drafts rather than deleting them.
       const emptyStoredDraftThread =
         reusableStoredDraftThread &&
+        reusableStoredDraftThread.sandboxSetup == null &&
         !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
           ? reusableStoredDraftThread
           : null;
@@ -246,7 +247,15 @@ export function useNewThreadHandler() {
             const investedMeanwhile = composerDraftHasUserContent(
               getComposerDraft(emptyStoredDraftThread.draftId),
             );
-            if (openedMeanwhile || promotedMeanwhile || remappedMeanwhile || investedMeanwhile) {
+            const reservedMeanwhile =
+              getDraftSession(emptyStoredDraftThread.draftId)?.sandboxSetup != null;
+            if (
+              openedMeanwhile ||
+              promotedMeanwhile ||
+              remappedMeanwhile ||
+              investedMeanwhile ||
+              reservedMeanwhile
+            ) {
               return null;
             }
             workspaceContext = {
@@ -331,6 +340,7 @@ export function useNewThreadHandler() {
         currentRouteTarget?.kind === "draft" &&
         latestActiveDraftThread.logicalProjectKey === logicalProjectKey &&
         latestActiveDraftThread.promotedTo == null &&
+        latestActiveDraftThread.sandboxSetup == null &&
         // Same content rule as above: a new-thread request while viewing an
         // invested draft mints a fresh one instead of repurposing it.
         !composerDraftHasUserContent(getComposerDraft(currentRouteTarget.draftId))
@@ -376,6 +386,7 @@ export function useNewThreadHandler() {
           // to reuse is still mapped at this point — reusing it here would
           // silently undo mint-fresh semantics.
           racedDraft.draftId !== storedDraftThread?.draftId &&
+          racedDraft.sandboxSetup == null &&
           readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
         ) {
           // Same remap the reuse paths above perform: point the draft at the

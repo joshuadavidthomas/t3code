@@ -10,12 +10,21 @@ const testState = vi.hoisted(() => {
     defaultModelSelection: null,
     defaultRuntimeMode: "full-access" as RuntimeMode,
   };
-  let storedDraft: {
+  type StoredDraft = {
     readonly draftId: string;
     readonly environmentId: string;
     readonly promotedTo: null;
+    readonly sandboxSetup?: object | null;
     readonly threadId: string;
-  } | null = null;
+    readonly logicalProjectKey?: string;
+    readonly createdAt?: string;
+    readonly runtimeMode?: RuntimeMode;
+    readonly interactionMode?: string;
+  };
+  let storedDraft: StoredDraft | null = null;
+  let activeDraft: StoredDraft | null = null;
+  let routeTarget: { kind: "draft"; draftId: string } | null = null;
+  const composerDrafts = new Map<string, { sandboxSetup?: object | null | undefined }>();
   const router = {
     state: {
       location: { href: "/" },
@@ -26,9 +35,11 @@ const testState = vi.hoisted(() => {
     }),
   };
   const draftStore = {
-    getComposerDraft: vi.fn(() => ({})),
+    getComposerDraft: vi.fn((draftId: string) => composerDrafts.get(draftId) ?? {}),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
-    getDraftSession: vi.fn(() => null),
+    getDraftSession: vi.fn((draftId: string) =>
+      activeDraft?.draftId === draftId ? activeDraft : null,
+    ),
     getDraftThread: vi.fn(() => null),
     applyStickyState: vi.fn(),
     setDraftThreadContext: vi.fn(),
@@ -53,6 +64,9 @@ const testState = vi.hoisted(() => {
       },
     ) {
       storedDraft = nextStoredDraft;
+      activeDraft = null;
+      routeTarget = null;
+      composerDrafts.clear();
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
@@ -66,6 +80,21 @@ const testState = vi.hoisted(() => {
       projectFileRead = new Promise<null>((resolve) => {
         completeProjectFileRead = resolve;
       });
+    },
+    reserveStoredDraft(nextStoredDraft: NonNullable<typeof storedDraft>) {
+      storedDraft = nextStoredDraft;
+      activeDraft = nextStoredDraft;
+      composerDrafts.set(nextStoredDraft.draftId, { sandboxSetup: nextStoredDraft.sandboxSetup });
+    },
+    setActiveDraft(nextActiveDraft: NonNullable<typeof storedDraft>) {
+      activeDraft = nextActiveDraft;
+      routeTarget = { kind: "draft", draftId: nextActiveDraft.draftId };
+      composerDrafts.set(nextActiveDraft.draftId, {
+        sandboxSetup: nextActiveDraft.sandboxSetup,
+      });
+    },
+    get routeTarget() {
+      return routeTarget;
     },
     router,
   };
@@ -133,7 +162,8 @@ vi.mock("../composerDraftStore", () => {
     getState: () => testState.draftStore,
   });
   return {
-    composerDraftHasUserContent: () => false,
+    composerDraftHasUserContent: (draft: { hasUserContent?: boolean } | undefined) =>
+      draft?.hasUserContent === true,
     markPromotedDraftThreadByRef: vi.fn(),
     useComposerDraftStore,
   };
@@ -173,7 +203,7 @@ vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
 }));
-vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => null }));
+vi.mock("../threadRoutes", () => ({ resolveThreadRouteTarget: () => testState.routeTarget }));
 vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
@@ -286,4 +316,96 @@ describe.each([
       );
     },
   );
+});
+
+describe("useNewThreadHandler with sandbox-reserved drafts", () => {
+  const projectRef = {
+    environmentId: "environment-ssh",
+    projectId: "project-remote",
+  } as never;
+  const setup = { prompt: "original sandbox prompt" };
+
+  it("mints fresh IDs instead of reusing a mapped reserved draft", async () => {
+    const reserved = {
+      draftId: "draft-reserved-mapped",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      sandboxSetup: setup,
+      threadId: "thread-reserved-mapped",
+    } as const;
+    testState.reset(reserved);
+
+    const pendingOpen = useNewThreadHandler()(projectRef);
+    testState.completeProjectFileRead(null);
+
+    await expect(pendingOpen).resolves.toEqual({
+      draftId: "draft-delayed",
+      threadId: "thread-delayed",
+    });
+    expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalledWith(
+      reserved.draftId,
+      expect.anything(),
+    );
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      reserved.draftId,
+      expect.anything(),
+    );
+  });
+
+  it("mints fresh IDs instead of reusing the active reserved draft", async () => {
+    const reserved = {
+      draftId: "draft-reserved-active",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      sandboxSetup: setup,
+      threadId: "thread-reserved-active",
+      logicalProjectKey: "remote-project",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      runtimeMode: "full-access" as RuntimeMode,
+    } as const;
+    testState.reset(null);
+    testState.setActiveDraft(reserved);
+
+    const pendingOpen = useNewThreadHandler()(projectRef);
+    testState.completeProjectFileRead(null);
+
+    await expect(pendingOpen).resolves.toEqual({
+      draftId: "draft-delayed",
+      threadId: "thread-delayed",
+    });
+    expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalledWith(
+      reserved.draftId,
+      expect.anything(),
+    );
+  });
+
+  it("does not adopt a reserved draft that wins while defaults are loading", async () => {
+    const reserved = {
+      draftId: "draft-reserved-race",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      sandboxSetup: setup,
+      threadId: "thread-reserved-race",
+      logicalProjectKey: "remote-project",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      runtimeMode: "full-access" as RuntimeMode,
+    } as const;
+    testState.reset(null);
+    const pendingOpen = useNewThreadHandler()(projectRef);
+    testState.reserveStoredDraft(reserved);
+    testState.completeProjectFileRead(null);
+
+    await expect(pendingOpen).resolves.toEqual({
+      draftId: "draft-delayed",
+      threadId: "thread-delayed",
+    });
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      reserved.draftId,
+      expect.anything(),
+    );
+  });
 });

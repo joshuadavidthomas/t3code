@@ -469,6 +469,8 @@ export class EnvironmentAuth extends Context.Service<
       readonly subject?: string;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly label?: string;
+      /** Revokes the subject's other active bearer sessions. */
+      readonly replaceActive?: boolean;
     }) => Effect.Effect<IssuedBearerSession, ServerAuthInternalError>;
     readonly listSessions: () => Effect.Effect<
       ReadonlyArray<AuthClientSession>,
@@ -940,6 +942,7 @@ export const make = Effect.gen(function* () {
           deviceType: "bot",
         },
         ...(input?.ttl ? { ttl: input.ttl } : {}),
+        ...(input?.replaceActive ? { replaceActiveForSubjectAndMethod: true } : {}),
       })
       .pipe(
         Effect.map(

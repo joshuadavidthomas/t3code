@@ -43,13 +43,25 @@ interface SettingsScopeMenuProps {
   readonly onChange: (next: SettingsScopeSearch) => void;
 }
 
+export interface SettingsEnvironmentMenuExtension {
+  readonly selected?: { value: string; label: string; icon: ReactNode };
+  readonly options: ReactNode;
+  /** Return true when a page-specific target handled this selection. */
+  readonly onSelect: (value: string) => boolean;
+  readonly onProjectChange?: (next: SettingsScopeSearch) => void;
+}
+
 /**
  * "Applying settings for <project> across <environment>" at the top of a settings
  * page. The two pickers are the targets a change is written to. A project is
  * the same project on every environment, so the environment alone decides
  * where a project override is written.
  */
-export function SettingsScopeSentence() {
+export function SettingsScopeSentence({
+  environmentMenu,
+}: {
+  environmentMenu?: SettingsEnvironmentMenuExtension;
+} = {}) {
   const scope = useOptionalSettingsScope();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useEnvironments();
@@ -65,14 +77,19 @@ export function SettingsScopeSentence() {
       {/* Each connective stays with its picker so a wrap never strands "on". */}
       <span className="flex min-w-0 items-center gap-1.5">
         <span className="shrink-0">Applying settings for</span>
-        <ProjectScopeMenu {...props} />
+        <ProjectScopeMenu
+          {...props}
+          onChange={environmentMenu?.onProjectChange ?? props.onChange}
+        />
       </span>
       <span className="flex min-w-0 items-center gap-1.5">
         <span className="shrink-0">
           {/* A legacy checkout link names one environment without `machine`. */}
-          {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}
+          {environmentMenu?.selected || scope.search.machine || scope.scope.kind === "checkout"
+            ? "on"
+            : "across"}
         </span>
-        <EnvironmentScopeMenu {...props} />
+        <EnvironmentScopeMenu {...props} extension={environmentMenu} />
       </span>
     </p>
   );
@@ -105,7 +122,15 @@ function ScopeMenu({
   );
 }
 
-function EnvironmentScopeMenu({ value, groups, environments, onChange }: SettingsScopeMenuProps) {
+function EnvironmentScopeMenu({
+  value,
+  groups,
+  environments,
+  onChange,
+  extension,
+}: SettingsScopeMenuProps & {
+  extension?: SettingsEnvironmentMenuExtension | undefined;
+}) {
   const resolved = resolveSettingsScope(value, groups, environments);
   const environmentValue = environmentAxisValue(
     value,
@@ -118,7 +143,9 @@ function EnvironmentScopeMenu({ value, groups, environments, onChange }: Setting
     <ScopeMenu
       ariaLabel="Environment scope"
       icon={
-        selected ? (
+        extension?.selected ? (
+          extension.selected.icon
+        ) : selected ? (
           <EnvironmentMachineIcon
             aria-hidden
             kind={resolveEnvironmentMachineKind(selected.serverConfig)}
@@ -127,17 +154,20 @@ function EnvironmentScopeMenu({ value, groups, environments, onChange }: Setting
         ) : null
       }
       label={
-        selected
-          ? settingsScopeEnvironmentLabel(selected, environments)
-          : environmentValue !== ALL_ENVIRONMENTS_VALUE
-            ? "Unavailable environment"
-            : "All environments"
+        extension?.selected
+          ? extension.selected.label
+          : selected
+            ? settingsScopeEnvironmentLabel(selected, environments)
+            : environmentValue !== ALL_ENVIRONMENTS_VALUE
+              ? "Unavailable environment"
+              : "All environments"
       }
     >
       <MenuRadioGroup
-        value={environmentValue}
+        value={extension?.selected?.value ?? environmentValue}
         onValueChange={(next) => {
-          if (typeof next === "string") onChange(selectEnvironmentAxis(value, next));
+          if (typeof next === "string" && !extension?.onSelect(next))
+            onChange(selectEnvironmentAxis(value, next));
         }}
       >
         <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE}>
@@ -166,6 +196,7 @@ function EnvironmentScopeMenu({ value, groups, environments, onChange }: Setting
             </span>
           </MenuRadioItem>
         ))}
+        {extension?.options}
       </MenuRadioGroup>
     </ScopeMenu>
   );

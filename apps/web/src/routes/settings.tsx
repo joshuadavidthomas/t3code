@@ -91,6 +91,9 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   if (SETTINGS_DEVICE_ONLY_PATHS.has(pathname) || pathname === "/settings/projects") {
     return children;
   }
+  // Providers owns registration targets as well as real environments, including
+  // their unavailable states and the picker used to leave them.
+  if (pathname === "/settings/providers") return children;
   // Keep the scope sentence on screen so the selection can be changed back.
   if (scope.kind === "unavailable")
     return (

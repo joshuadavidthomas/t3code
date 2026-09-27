@@ -112,7 +112,7 @@ function appendUnavailableDynamicModelSelection(
   return [...options, { slug, name: slug, isCustom: false, isUnavailable: true }];
 }
 
-function toAppModelOption(model: ServerProvider["models"][number]): AppModelOption {
+export function toAppModelOption(model: ServerProvider["models"][number]): AppModelOption {
   const option: AppModelOption = {
     slug: model.slug,
     name: model.name,

@@ -111,6 +111,32 @@ it.layer(NodeServices.layer)("EnvironmentAuth administrative operations", (it) =
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
 
+  it.effect("replaces only the same subject's active bearer sessions when asked", () =>
+    Effect.gen(function* () {
+      const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessionCredentials = yield* SessionStore.SessionStore;
+
+      const other = yield* environmentAuth.issueSession({ subject: "other" });
+      const first = yield* environmentAuth.issueSession({ subject: "control" });
+      const second = yield* environmentAuth.issueSession({ subject: "control" });
+      const replacement = yield* environmentAuth.issueSession({
+        subject: "control",
+        replaceActive: true,
+      });
+
+      expect(yield* Effect.flip(sessionCredentials.verify(first.token))).toMatchObject({
+        _tag: "SessionTokenRevokedError",
+      });
+      expect(yield* Effect.flip(sessionCredentials.verify(second.token))).toMatchObject({
+        _tag: "SessionTokenRevokedError",
+      });
+      expect((yield* sessionCredentials.verify(replacement.token)).sessionId).toBe(
+        replacement.sessionId,
+      );
+      expect((yield* sessionCredentials.verify(other.token)).sessionId).toBe(other.sessionId);
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
   it.effect("surfaces lastConnectedAt through the listed session view", () =>
     Effect.gen(function* () {
       const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;

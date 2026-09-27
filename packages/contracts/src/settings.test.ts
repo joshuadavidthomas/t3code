@@ -20,6 +20,14 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+it("ignores the retired sandbox opt-in flag in existing settings", () => {
+  expect(decodeServerSettings({ experimentalSandboxEnabled: false })).toEqual(
+    decodeServerSettings({}),
+  );
+  expect(decodeServerSettingsPatch({ experimentalSandboxEnabled: true })).toEqual({});
+  expect(decodeClientSettingsPatch({ experimentalSandboxEnabled: true })).toEqual({});
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

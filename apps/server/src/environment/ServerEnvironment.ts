@@ -22,6 +22,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
+import { readSandboxDeployment } from "../sandbox/SandboxDeployment.ts";
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
@@ -202,6 +203,9 @@ export const make = Effect.gen(function* () {
   // the fd and correctly do not advertise.
   const desktopAppUpdate =
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
+  // A sandbox destination doesn't launch further sandboxes.
+  const sandboxDestination =
+    (yield* readSandboxDeployment.pipe(Effect.orElseSucceed(() => null))) !== null;
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
@@ -241,6 +245,7 @@ export const make = Effect.gen(function* () {
       pullRequestStackActions: true,
       threadPullRequestLinking: true,
       environmentIcon: true,
+      ...(sandboxDestination ? {} : { sandboxConfiguration: true }),
       projectCloneTracking: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate

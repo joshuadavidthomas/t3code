@@ -3,6 +3,24 @@
 Connect a phone, browser, or another desktop app to T3 Code running on a different
 machine. That machine must stay running and reachable while you work.
 
+## On-demand workspaces (early access)
+
+On web and desktop, open **Settings → Connections → Add environment → Sandbox**,
+choose **Sprites**, and give the account a name and API token. You can add separate
+personal and work accounts. In **Settings → Providers**, select that account in
+the environment menu and configure Claude.
+
+Start a new thread, choose the account from **Run on**, then choose your project,
+published branch, and model before sending.
+
+This first version supports Claude and public GitHub repositories. The initial
+message must be text only, and the selected branch must be pushed to GitHub.
+Mobile can continue a paired sandbox thread; creation is on web and desktop.
+
+Manage running sandboxes under **Settings → Connections**. **Connect** opens an
+existing sandbox connection; **Delete sandbox** removes the workspace. Removing
+an account or disconnecting an environment does not delete its sandboxes.
+
 ## T3 Connect
 
 T3 Connect makes an environment available to your other devices without setting

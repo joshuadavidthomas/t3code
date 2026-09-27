@@ -111,7 +111,9 @@ export function resolveLockedWorkspaceLabel(
   effectiveEnvMode: EnvMode,
 ): string {
   if (activeWorktreePath) return "Worktree";
-  return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
+  return effectiveEnvMode === "worktree"
+    ? resolveEnvModeLabel("worktree")
+    : resolveEnvModeLabel("local");
 }
 
 export interface PreviousWorktreeSeed {

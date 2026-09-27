@@ -5,11 +5,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { SandboxDeployment } from "../sandbox/SandboxDeployment.ts";
 import {
   applyManifestDefault,
   BUNDLED_MODEL_MANIFEST,
@@ -29,6 +31,7 @@ import {
  */
 
 const CODEX = ProviderDriverKind.make("codex");
+const encodeDeployment = Schema.encodeEffect(Schema.fromJsonString(SandboxDeployment));
 const model = (overrides: Partial<ServerProviderModel>): ServerProviderModel => ({
   slug: "gpt-test",
   name: "GPT Test",
@@ -342,6 +345,43 @@ const serviceLayers = (input: {
   );
 
 describe("ModelManifest service", () => {
+  it.effect(
+    "refreshes normally after sandbox provisioning when provider update checks are enabled",
+    () => {
+      let fetchCount = 0;
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* ServerConfig.ServerConfig;
+        yield* fs.makeDirectory(config.stateDir, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(config.stateDir, "sandbox-runtime.json"),
+          yield* encodeDeployment({
+            artifactIntegrity: `sha256-${"a".repeat(64)}`,
+            workspaceRoot: "/workspace/project",
+          }),
+        );
+        const service = yield* make;
+        assert.deepStrictEqual(yield* service.current, BUNDLED_MODEL_MANIFEST);
+        assert.deepStrictEqual(yield* service.refresh, REMOTE_MANIFEST);
+        assert.deepStrictEqual(yield* service.current, REMOTE_MANIFEST);
+        assert.strictEqual(fetchCount, 1);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "manifest-sandbox-",
+            settings: { enableProviderUpdateChecks: true },
+            response: () => {
+              fetchCount++;
+              return Response.json(REMOTE_MANIFEST);
+            },
+          }),
+        ),
+        Effect.scoped,
+      );
+    },
+  );
+
   it.live("explicit refresh bypasses fresh memory and disk caches", () => {
     let fetchCount = 0;
     const updated: ModelManifestData = {

@@ -16,7 +16,7 @@ import {
   getTriggerDisplayModelLabel,
   getTriggerDisplayModelName,
 } from "./providerIconUtils";
-import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
+import { shouldShowInstanceBadge, type ProviderModelPickerEntry } from "../../providerInstances";
 import {
   ComposerControl,
   ComposerControlChevron,
@@ -37,7 +37,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   lockedProvider: ProviderDriverKind | null;
   lockedContinuationGroupKey?: string | null;
   /** Instance entries rendered in the sidebar + used to resolve display name. */
-  instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  instanceEntries: ReadonlyArray<ProviderModelPickerEntry>;
   keybindings?: ResolvedKeybindingsConfig;
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
   activeProviderIconClassName?: string;
@@ -54,6 +54,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   onOpenChange?: (open: boolean) => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
+  favoriteModelsByInstance?: ReadonlyMap<ProviderInstanceId, readonly string[]>;
+  onFavoriteModelsChange?: (instanceId: ProviderInstanceId, models: readonly string[]) => void;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
@@ -91,7 +93,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
     : triggerTitle;
   const showInstanceBadge =
-    activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
+    activeEntry !== null &&
+    !("source" in activeEntry) &&
+    shouldShowInstanceBadge(
+      activeEntry,
+      props.instanceEntries.filter((entry) => !("source" in entry)),
+    );
 
   const setIsMenuOpen = (open: boolean) => {
     props.onOpenChange?.(open);
@@ -305,6 +312,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {...(props.onOpenProviderSetup ? { onOpenProviderSetup: props.onOpenProviderSetup } : {})}
           {...(props.getModelDisabledReason
             ? { getModelDisabledReason: props.getModelDisabledReason }
+            : {})}
+          {...(props.favoriteModelsByInstance
+            ? { favoriteModelsByInstance: props.favoriteModelsByInstance }
+            : {})}
+          {...(props.onFavoriteModelsChange
+            ? { onFavoriteModelsChange: props.onFavoriteModelsChange }
             : {})}
           onInstanceModelChange={handleInstanceModelChange}
         />

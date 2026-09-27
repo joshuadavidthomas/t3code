@@ -22,8 +22,23 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { windowsSystemTar } from "./build-cli-archive.ts";
+import {
+  readSandboxRuntimeManifest,
+  sha256File,
+  validateSandboxRuntimeManifest,
+  windowsSystemTar,
+} from "./build-cli-archive.ts";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import type { SandboxRuntimeManifest } from "@t3tools/contracts";
+
+const encodeSandboxDeployment = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ artifactIntegrity: Schema.String, workspaceRoot: Schema.String }),
+  ),
+);
+const decodeIssuedSession = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ token: Schema.String })),
+);
 
 export class CliArchiveSmokeError extends Schema.TaggedError<CliArchiveSmokeError>()(
   "CliArchiveSmokeError",
@@ -68,6 +83,7 @@ const runExecutable = Effect.fn("runExecutable")(function* (
 const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   readonly archive: string;
   readonly expectVersion: string;
+  readonly sandboxRuntime: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -105,6 +121,22 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     }
   }
 
+  let sandboxManifest: SandboxRuntimeManifest | undefined;
+  if (input.sandboxRuntime) {
+    const artifactIntegrity = `sha256-${yield* sha256File(input.archive)}`;
+    sandboxManifest = yield* validateSandboxRuntimeManifest(
+      yield* fs.readFileString(`${input.archive}.sandbox.json`),
+      artifactIntegrity,
+    );
+    yield* readSandboxRuntimeManifest({
+      executable,
+      artifactIntegrity,
+      expected: sandboxManifest,
+      cwd: contentDir,
+      env: { PATH: "", HOME: scratch, USERPROFILE: scratch, TMPDIR: scratch, TEMP: scratch },
+    });
+  }
+
   const version = yield* runExecutable(executable, ["--version"], contentDir);
   if (version.exitCode !== 0 || !version.stdout.includes(input.expectVersion)) {
     return yield* new CliArchiveSmokeError({
@@ -120,6 +152,39 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
   const net = yield* NetService.NetService;
   const port = yield* net.findAvailablePort(47700);
   const home = path.join(scratch, "home");
+  let bearerToken: string | undefined;
+  if (sandboxManifest) {
+    const userdata = path.join(home, "userdata");
+    yield* fs.makeDirectory(userdata, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(userdata, "sandbox-runtime.json"),
+      `${yield* encodeSandboxDeployment({
+        artifactIntegrity: sandboxManifest.artifactIntegrity,
+        workspaceRoot: scratch,
+      })}\n`,
+    );
+    const issued = yield* runExecutable(
+      executable,
+      ["auth", "session", "issue", "--base-dir", home, "--json"],
+      contentDir,
+    );
+    if (issued.exitCode !== 0) {
+      return yield* new CliArchiveSmokeError({
+        step: "issuing a sandbox runtime auth session",
+        detail: issued.stderr,
+      });
+    }
+    bearerToken = yield* decodeIssuedSession(issued.stdout).pipe(
+      Effect.map((value) => value.token),
+      Effect.mapError(
+        () =>
+          new CliArchiveSmokeError({
+            step: "reading the auth session",
+            detail: "Invalid session response.",
+          }),
+      ),
+    );
+  }
   const server = yield* spawner.spawn(
     ChildProcess.make(
       executable,
@@ -133,6 +198,9 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
           TMPDIR: scratch,
           TEMP: scratch,
           T3CODE_HOME: home,
+          ...(sandboxManifest
+            ? { T3CODE_SANDBOX_RUNTIME_ARCHIVE: path.resolve(input.archive) }
+            : {}),
         },
         extendEnv: false,
       },
@@ -159,18 +227,42 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     Effect.timeout(Duration.seconds(30)),
     Effect.orElseSucceed(() => false),
   );
-  yield* server.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore);
-  yield* server.exitCode.pipe(Effect.timeout(Duration.seconds(10)), Effect.ignore);
-  const [stdout, stderr] = yield* Fiber.join(output).pipe(
-    Effect.timeout(Duration.seconds(5)),
-    Effect.orElseSucceed(() => ["", ""] as const),
-  );
   if (!ready) {
+    yield* server.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore);
+    const [stdout, stderr] = yield* Fiber.join(output).pipe(
+      Effect.timeout(Duration.seconds(5)),
+      Effect.orElseSucceed(() => ["", ""] as const),
+    );
     return yield* new CliArchiveSmokeError({
       step: "serving from the extracted archive",
       detail: `no 200 from / within 30s\n${stdout}${stderr}`,
     });
   }
+  if (sandboxManifest && bearerToken) {
+    yield* Effect.gen(function* () {
+      const response = yield* httpClient.execute(
+        HttpClientRequest.get(`http://127.0.0.1:${String(port)}/api/sandbox/runtime`).pipe(
+          HttpClientRequest.setHeader("authorization", `Bearer ${bearerToken}`),
+        ),
+      );
+      if (response.status !== 200) {
+        return yield* new CliArchiveSmokeError({
+          step: "probing the sandbox runtime endpoint",
+          detail: `unexpected HTTP status ${response.status}`,
+        });
+      }
+      yield* validateSandboxRuntimeManifest(
+        yield* response.text,
+        sandboxManifest.artifactIntegrity,
+        sandboxManifest,
+      );
+    }).pipe(
+      // Like the readiness failure above, stop the server before reporting.
+      Effect.onError(() => server.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore)),
+    );
+  }
+  yield* server.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore);
+  yield* server.exitCode.pipe(Effect.timeout(Duration.seconds(10)), Effect.ignore);
   yield* Effect.log(`[cli-smoke] ${root}: --version passed and serve answered on ${String(port)}.`);
 });
 
@@ -179,6 +271,7 @@ const command = Command.make(
   {
     archive: Flag.String("archive"),
     expectVersion: Flag.String("expect-version"),
+    sandboxRuntime: Flag.Boolean("sandbox-runtime").pipe(Flag.withDefault(false)),
   },
   (input) => smokeCliArchive(input).pipe(Effect.scoped),
 ).pipe(Command.withDescription("Extract a CLI archive and run its executable."));

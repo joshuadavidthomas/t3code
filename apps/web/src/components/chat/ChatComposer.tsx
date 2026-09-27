@@ -27,6 +27,7 @@ import type {
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
   ProviderInteractionMode,
+  ProviderOptionSelection,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   ScopedThreadRef,
@@ -123,6 +124,7 @@ import {
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerMenuState } from "./useComposerMenuState";
+import { resolveSandboxProviderEntry } from "./useSandboxComposer";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerFocusState } from "./useComposerFocusState";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
@@ -949,9 +951,15 @@ import {
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
   sortProviderInstanceEntries,
+  type DeclaredProviderInstanceEntry,
   type ProviderInstanceEntry,
+  type ProviderModelPickerEntry,
 } from "../../providerInstances";
-import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
+import {
+  type AppModelOption,
+  getAppModelOptionsForInstance,
+  toAppModelOption,
+} from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import {
   isVideoAttachment,
@@ -1396,6 +1404,13 @@ export interface ChatComposerProps {
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
   providerStatuses: ServerProvider[];
+  /** Runtime-declared, account-scoped catalog. Undefined keeps the ordinary host catalog path. */
+  sandboxCatalog?: ReadonlyArray<DeclaredProviderInstanceEntry>;
+  sandboxFavoriteModels?: ReadonlyMap<ProviderInstanceId, readonly string[]>;
+  onSandboxFavoriteModelsChange?: (
+    instanceId: ProviderInstanceId,
+    models: readonly string[],
+  ) => void;
   /** False until the environment's server config has arrived at least once. */
   providerCatalogKnown: boolean;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
@@ -1526,6 +1541,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     interactionMode: requestedInteractionMode,
     lockedProvider,
     providerStatuses,
+    sandboxCatalog,
+    sandboxFavoriteModels,
+    onSandboxFavoriteModelsChange,
     providerCatalogKnown,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
@@ -1590,6 +1608,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
   const composerDraft = useComposerThreadDraft(composerDraftTarget);
+  const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   // Live target key, for async flows that must notice a thread switch that
   // happened while they awaited.
   const composerDraftTargetKeyRef = useRef("");
@@ -1862,23 +1881,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Instance-aware projection of the wire provider list. One entry per
   // configured instance (default built-in + any custom `providerInstances.*`),
   // sorted default-first per driver kind for a stable picker order.
-  const providerInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
+  const hostProviderInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
     () =>
       sortProviderInstanceEntries(
         applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
       ),
     [providerStatuses, settings],
   );
+  const providerInstanceEntries: ReadonlyArray<ProviderModelPickerEntry> =
+    sandboxCatalog ?? hostProviderInstanceEntries;
   const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
-  const {
-    selectedProviderEntry,
-    requestedDriverKind,
-    lockedContinuationGroupKey,
-    unavailableProviderInstanceId,
-  } = useMemo(
+  const liveProviderSelection = useMemo(
     () =>
       resolveComposerProviderSelection({
-        entries: providerInstanceEntries,
+        entries: hostProviderInstanceEntries,
         candidateInstanceIds: [
           selectedProviderByThreadId,
           activeThread?.session?.providerInstanceId,
@@ -1895,34 +1911,53 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThreadModelSelection?.instanceId,
       selectedProviderByThreadId,
       lockedProvider,
-      providerInstanceEntries,
+      hostProviderInstanceEntries,
     ],
   );
+  const declaredProviderEntry = useMemo(
+    () =>
+      sandboxCatalog === undefined
+        ? undefined
+        : resolveSandboxProviderEntry(sandboxCatalog, selectedProviderByThreadId, lockedProvider),
+    [lockedProvider, sandboxCatalog, selectedProviderByThreadId],
+  );
+  const {
+    selectedProviderEntry,
+    requestedDriverKind,
+    lockedContinuationGroupKey,
+    unavailableProviderInstanceId,
+  } = liveProviderSelection;
+  const effectiveProviderEntry =
+    sandboxCatalog === undefined ? selectedProviderEntry : declaredProviderEntry;
   const selectedInstanceId =
-    selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
+    effectiveProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
   const noProviderAvailable =
-    selectedProviderEntry === undefined && multipleModelSelections === null;
+    effectiveProviderEntry === undefined && multipleModelSelections === null;
   // Before the catalog arrives, every thread resolves to "no provider". Send
   // stays blocked either way; only the chrome waits, keeping the picker with
   // the thread's own selection instead of swapping in the setup button and
   // back once the catalog lands.
-  const providerCatalogPending = noProviderAvailable && !providerCatalogKnown;
-  const showProviderUnavailable = noProviderAvailable && !providerCatalogPending;
-  const providerSetupInstanceId = noProviderAvailable
-    ? (unavailableProviderInstanceId ??
-      (lockedProvider === null
-        ? providerInstanceEntries.find((entry) => hasProviderSetup(entry.snapshot))?.instanceId
-        : undefined))
-    : undefined;
+  const providerCatalogPending =
+    noProviderAvailable && (sandboxCatalog !== undefined || !providerCatalogKnown);
+  const showProviderUnavailable =
+    sandboxCatalog === undefined && noProviderAvailable && !providerCatalogPending;
+  const providerSetupInstanceId =
+    sandboxCatalog === undefined && noProviderAvailable
+      ? (unavailableProviderInstanceId ??
+        (lockedProvider === null
+          ? hostProviderInstanceEntries.find((entry) => hasProviderSetup(entry.snapshot))
+              ?.instanceId
+          : undefined))
+      : undefined;
   const resolvedCompactDisabledReason =
     compactDisabledReason ?? (noProviderAvailable ? "Compacting is unavailable right now" : null);
   // The driver kind follows the instance that will actually run the turn,
   // which can differ from the persisted selection when that selection is
   // disabled.
   const selectedProvider: ProviderDriverKind =
-    selectedProviderEntry?.driverKind ?? requestedDriverKind;
+    effectiveProviderEntry?.driverKind ?? requestedDriverKind;
 
-  const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
+  const liveComposerModelState = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
     providers: providerStatuses,
     selectedProvider,
@@ -1931,8 +1966,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectModelSelection: activeProjectDefaultModelSelection,
     settings,
   });
+  const declaredDraftSelection = declaredProviderEntry
+    ? composerDraft.modelSelectionByProvider[declaredProviderEntry.instanceId]
+    : undefined;
+  const declaredModel = declaredProviderEntry
+    ? (declaredProviderEntry.models.find((model) => model.slug === declaredDraftSelection?.model)
+        ?.slug ??
+      declaredProviderEntry.models.find((model) => model.isDefault)?.slug ??
+      declaredProviderEntry.models[0]?.slug ??
+      "")
+    : "";
+  const composerModelOptions =
+    sandboxCatalog === undefined || !declaredProviderEntry
+      ? liveComposerModelState.modelOptions
+      : declaredDraftSelection?.options
+        ? { [declaredProviderEntry.instanceId]: declaredDraftSelection.options }
+        : null;
+  const selectedModel =
+    sandboxCatalog === undefined ? liveComposerModelState.selectedModel : declaredModel;
   const providerSendBlockReason = getAntigravitySendBlockReason(
-    selectedProviderEntry?.snapshot,
+    sandboxCatalog === undefined ? selectedProviderEntry?.snapshot : undefined,
     selectedModel,
   );
   const sendDisabledReason =
@@ -1944,10 +1997,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         (multipleModelSelections === null ? providerSendBlockReason : null)));
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = useMemo(
-    () => selectedProviderEntry?.snapshot ?? null,
-    [selectedProviderEntry],
+    () => (sandboxCatalog === undefined ? (selectedProviderEntry?.snapshot ?? null) : null),
+    [sandboxCatalog, selectedProviderEntry],
   );
-  const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
+  const compactCommandAvailable = providerSupportsManualCompaction(
+    sandboxCatalog === undefined ? selectedProviderEntry : undefined,
+  );
   const selectedProviderSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : [];
@@ -1972,7 +2027,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hadWorkspaceSnapshotRef.current = hasWorkspaceSnapshot;
   }, [gitCwd, selectedProviderStatus]);
   useEffect(() => {
-    if (!gitCwd || !selectedProviderEntry) return;
+    if (sandboxCatalog !== undefined || !gitCwd || !selectedProviderEntry) return;
     const key = `${environmentId}:${selectedProviderEntry.instanceId}:${gitCwd}`;
     const hasWorkspaceSnapshot = selectedProviderStatus?.workspaceSnapshots?.some(
       (snapshot) => snapshot.cwd === gitCwd,
@@ -2007,10 +2062,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         retryLater();
       }
     }, retryLater);
-  }, [environmentId, gitCwd, prompt, refreshProviders, selectedProviderEntry]);
+  }, [environmentId, gitCwd, prompt, refreshProviders, sandboxCatalog, selectedProviderEntry]);
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
-    () => selectedProviderEntry?.models ?? [],
-    [selectedProviderEntry],
+    () => effectiveProviderEntry?.models ?? [],
+    [effectiveProviderEntry],
   );
 
   const composerPromptInjectionState = useMemo(
@@ -2042,7 +2097,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
   const { enabled: planModeUiEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
-    provider: selectedProviderStatus,
+    provider:
+      sandboxCatalog === undefined ? selectedProviderStatus : (declaredProviderEntry ?? null),
     interactionMode: requestedInteractionMode,
   });
   const selectedModelSelection = useMemo<ModelSelection>(
@@ -2060,6 +2116,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   >(() => {
     const out = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
     for (const entry of providerInstanceEntries) {
+      if ("source" in entry) {
+        out.set(entry.instanceId, entry.models.map(toAppModelOption));
+        continue;
+      }
       out.set(
         entry.instanceId,
         getAppModelOptionsForInstance(
@@ -2642,6 +2702,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
+    ...(sandboxCatalog !== undefined
+      ? {
+          onModelOptionsChange: (nextOptions: ReadonlyArray<ProviderOptionSelection> | undefined) =>
+            setProviderModelOptions(composerDraftTarget, selectedProvider, nextOptions, {
+              instanceId: selectedInstanceId,
+              model: selectedModel,
+              persistSticky: false,
+            }),
+        }
+      : {}),
   });
   const providerTraitsPickerInput = {
     provider: selectedProvider,
@@ -2655,6 +2725,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
     isComposerOwned: true,
+    ...(sandboxCatalog !== undefined
+      ? {
+          onModelOptionsChange: (nextOptions: ReadonlyArray<ProviderOptionSelection> | undefined) =>
+            setProviderModelOptions(composerDraftTarget, selectedProvider, nextOptions, {
+              instanceId: selectedInstanceId,
+              model: selectedModel,
+              persistSticky: false,
+            }),
+        }
+      : {}),
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
   const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
   const {
@@ -5065,10 +5145,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             : selectedModelForPickerWithCustomFallback
         }
         lockedProvider={lockedProvider}
-        lockedContinuationGroupKey={lockedContinuationGroupKey}
+        lockedContinuationGroupKey={
+          sandboxCatalog === undefined ? lockedContinuationGroupKey : null
+        }
         instanceEntries={providerInstanceEntries}
         keybindings={keybindings}
         modelOptionsByInstance={modelOptionsByInstance}
+        {...(sandboxFavoriteModels ? { favoriteModelsByInstance: sandboxFavoriteModels } : {})}
+        {...(onSandboxFavoriteModelsChange
+          ? { onFavoriteModelsChange: onSandboxFavoriteModelsChange }
+          : {})}
         size={composerControlsInStrip ? "xs" : "sm"}
         triggerClassName={
           composerControlsInStrip
@@ -5092,12 +5178,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }
           : {})}
         onOpenChange={setIsComposerModelPickerOpen}
-        getModelDisabledReason={getModelDisabledReason}
+        getModelDisabledReason={(instanceId, model) => {
+          if (sandboxCatalog === undefined) return getModelDisabledReason(instanceId, model);
+          const entry = sandboxCatalog.find((candidate) => candidate.instanceId === instanceId);
+          return entry?.models.some((candidate) => candidate.slug === model)
+            ? null
+            : "Model is not available in this account.";
+        }}
         onInstanceModelChange={(instanceId, model) => {
           setMultipleModelSelections(null);
           onProviderModelSelect(instanceId, model);
         }}
-        onOpenProviderSetup={onOpenProviderSetup}
+        {...(sandboxCatalog === undefined ? { onOpenProviderSetup } : {})}
       />
 
       <>

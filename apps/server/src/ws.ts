@@ -67,6 +67,7 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   RpcClientId,
+  AuthStandardClientScopes,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -121,6 +122,8 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { SandboxConfigurations } from "./sandbox/SandboxConfiguration.ts";
+import { SandboxSubmissions, toSandboxSubmission } from "./sandbox/SandboxSubmissions.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -502,6 +505,8 @@ const makeWsRpcLayer = (
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
+      const sandboxConfiguration = yield* SandboxConfigurations;
+      const sandboxSubmissions = yield* SandboxSubmissions;
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
       const sql = yield* SqlClient.SqlClient;
@@ -2596,6 +2601,78 @@ const makeWsRpcLayer = (
               return { keybindings: keybindingsConfig, issues: [] };
             }),
             { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.sandboxGetConfiguration]: () =>
+          observeRpcEffect(WS_METHODS.sandboxGetConfiguration, sandboxConfiguration.read),
+        [WS_METHODS.sandboxLaunchOptions]: ({ configurationId }) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxLaunchOptions,
+            sandboxSubmissions.launchOptions(configurationId),
+          ),
+        [WS_METHODS.sandboxSubmit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxSubmit,
+            sandboxSubmissions.submit(input).pipe(Effect.map(toSandboxSubmission)),
+          ),
+        [WS_METHODS.sandboxListSubmissions]: () =>
+          observeRpcEffect(
+            WS_METHODS.sandboxListSubmissions,
+            sandboxSubmissions.list.pipe(Effect.map((values) => values.map(toSandboxSubmission))),
+          ),
+        [WS_METHODS.sandboxSubscribeSubmissions]: () =>
+          observeRpcStream(WS_METHODS.sandboxSubscribeSubmissions, sandboxSubmissions.listStream),
+        [WS_METHODS.sandboxGetSubmission]: ({ commandId }) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxGetSubmission,
+            sandboxSubmissions.get(commandId).pipe(Effect.map(toSandboxSubmission)),
+          ),
+        // The sandbox issues a standard client credential, so like pairing-token
+        // issuance the caller must already hold every scope it delegates.
+        [WS_METHODS.sandboxPairDestination]: ({ commandId }) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxPairDestination,
+            Effect.forEach(
+              AuthStandardClientScopes,
+              (scope) => authorizeEffect(scope, Effect.void),
+              { discard: true },
+            ).pipe(Effect.andThen(sandboxSubmissions.pair(commandId))),
+          ),
+        [WS_METHODS.sandboxRetrySubmission]: ({ commandId }) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxRetrySubmission,
+            sandboxSubmissions.retry(commandId).pipe(Effect.map(toSandboxSubmission)),
+          ),
+        [WS_METHODS.sandboxCancelSubmission]: ({ commandId }) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxCancelSubmission,
+            sandboxSubmissions.cancel(commandId).pipe(Effect.map(toSandboxSubmission)),
+          ),
+        [WS_METHODS.sandboxDeleteSubmission]: ({ commandId }) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxDeleteSubmission,
+            sandboxSubmissions.remove(commandId).pipe(Effect.map(toSandboxSubmission)),
+          ),
+        [WS_METHODS.sandboxSubscribeSubmission]: ({ commandId }) =>
+          observeRpcStream(
+            WS_METHODS.sandboxSubscribeSubmission,
+            sandboxSubmissions.stream(commandId),
+          ),
+        [WS_METHODS.sandboxSaveConfiguration]: (input) =>
+          observeRpcEffect(WS_METHODS.sandboxSaveConfiguration, sandboxConfiguration.save(input)),
+        [WS_METHODS.sandboxSaveProviderInstance]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxSaveProviderInstance,
+            sandboxConfiguration.saveProviderInstance(input),
+          ),
+        [WS_METHODS.sandboxRemoveConfiguration]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxRemoveConfiguration,
+            sandboxConfiguration.remove(input),
+          ),
+        [WS_METHODS.sandboxVerifyConfiguration]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxVerifyConfiguration,
+            sandboxConfiguration.verify(input),
           ),
         [WS_METHODS.serverGetSettings]: (_input) =>
           observeRpcEffect(

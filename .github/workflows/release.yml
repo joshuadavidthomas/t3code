@@ -809,7 +809,7 @@ jobs:
           set -euo pipefail
           cd release-assets
           shopt -s nullglob
-          archives=(t3-*.tar.gz t3-*.zip)
+          archives=(t3-*.tar.gz t3-*.zip t3-*.sandbox.json)
           if [[ ${#archives[@]} -eq 0 ]]; then
             echo "No CLI archives were produced." >&2
             exit 1
@@ -882,6 +882,7 @@ jobs:
               echo 'release-assets/*.yml'
             fi
             echo 'release-assets/*.tar.gz'
+            echo 'release-assets/t3-*.sandbox.json'
             echo 'release-assets/SHA256SUMS'
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"

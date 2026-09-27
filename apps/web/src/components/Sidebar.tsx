@@ -181,6 +181,7 @@ import {
   shouldNavigateAfterThreadPark,
   shouldRecedeSidebarThread,
   resolveWorkingStartedAt,
+  isDraftDiscardLocked,
   sidebarListItemId,
   sidebarMarkerId,
   sortLogicalProjectsForSidebar,
@@ -244,6 +245,7 @@ import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/too
 import { MiddleTruncate } from "./ui/middle-truncate";
 import {
   composerDraftHasUserContent,
+  EMPTY_THREAD_DRAFT,
   DraftId,
   useComposerDraftStore,
   useThreadHasUnsentDraft,
@@ -713,8 +715,14 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onDiscard: (draftId: DraftId) => void;
 }) {
   const { composer, draftId, onDiscard, onNavigate, session } = props;
+  const setupPending = useComposerDraftStore((store) =>
+    isDraftDiscardLocked(store.getDraftSession(draftId)?.sandboxSetup),
+  );
   const promptPreview =
-    replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
+    replaceComposerContextReferences(
+      composer.prompt || session.sandboxSetup?.prompt || "",
+      (occurrence) => occurrence.label,
+    )
       .trim()
       .split("\n", 1)[0] ?? "";
   // images mirrors persistedAttachments once rehydration finishes; before
@@ -789,6 +797,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
                     <button
                       type="button"
                       aria-label="Discard draft"
+                      disabled={setupPending}
                       onClick={handleDiscard}
                       className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
                     >
@@ -845,9 +854,12 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       const draftId = DraftId.make(props.routeDraftId);
       const store = useComposerDraftStore.getState();
       const session = store.getDraftSession(draftId);
-      const composer = store.getComposerDraft(draftId);
+      const composer = store.getComposerDraft(draftId) ?? EMPTY_THREAD_DRAFT;
       row =
-        session && session.promotedTo == null && composer && composerDraftHasUserContent(composer)
+        session &&
+        session.promotedTo == null &&
+        composer &&
+        (composerDraftHasUserContent(composer) || session.sandboxSetup)
           ? { draftId, session, composer }
           : null;
     }
@@ -877,8 +889,8 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
         }
         continue;
       }
-      const composer = draftsByThreadKey[draftKey];
-      if (!composer || !composerDraftHasUserContent(composer)) {
+      const composer = draftsByThreadKey[draftKey] ?? EMPTY_THREAD_DRAFT;
+      if (!composerDraftHasUserContent(composer) && !session.sandboxSetup) {
         continue;
       }
       rows.push({ draftId: DraftId.make(draftKey), session, composer });
@@ -894,6 +906,12 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   ]);
   const handleDiscard = useCallback(
     (draftId: DraftId) => {
+      if (
+        isDraftDiscardLocked(
+          useComposerDraftStore.getState().getDraftSession(draftId)?.sandboxSetup,
+        )
+      )
+        return;
       // The /draft/$draftId route redirects home on its own when the draft
       // it renders disappears, so discarding the open draft needs no
       // special-casing here.
@@ -2487,7 +2505,10 @@ export default function Sidebar() {
       if (session.promotedTo != null) {
         continue;
       }
-      if (!composerDraftHasUserContent(store.draftsByThreadKey[draftKey])) {
+      if (
+        !composerDraftHasUserContent(store.draftsByThreadKey[draftKey]) &&
+        !session.sandboxSetup
+      ) {
         continue;
       }
       if (

@@ -8,7 +8,7 @@ import { cn } from "~/lib/utils";
 import {
   isProviderInstancePickerReady,
   shouldShowInstanceBadge,
-  type ProviderInstanceEntry,
+  type ProviderModelPickerEntry,
 } from "../../providerInstances";
 
 /**
@@ -16,7 +16,8 @@ import {
  * kind-based copy but uses the entry's configured `displayName` so custom
  * instances get their user-authored name (e.g. "Codex Personal — Unavailable.").
  */
-function describeUnavailableInstance(entry: ProviderInstanceEntry): string {
+function describeUnavailableInstance(entry: ProviderModelPickerEntry): string {
+  if ("source" in entry) return entry.displayName;
   const label = entry.displayName;
   if (!entry.enabled || entry.status === "disabled") {
     return `${label} — Disabled in settings.`;
@@ -50,14 +51,14 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
    * `codex_personal` appear as two distinct rail items, each routing to
    * their own model list.
    */
-  instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  instanceEntries: ReadonlyArray<ProviderModelPickerEntry>;
   /** Render the favorites rail entry. Hidden for locked-provider instance switching. */
   showFavorites?: boolean;
   /** Instance ids shown in the rail but unavailable for the current picker context. */
   disabledInstanceIds?: ReadonlySet<ProviderInstanceId>;
   /** Non-ready instances whose selected unavailable model remains reachable. */
   selectableUnavailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
-  getDisabledInstanceTooltip?: (entry: ProviderInstanceEntry) => string;
+  getDisabledInstanceTooltip?: (entry: ProviderModelPickerEntry) => string;
   /**
    * Instance id values that should render the "new" sparkle badge. Callers
    * pass the subset of default built-in ids they want flagged (custom

@@ -56,6 +56,7 @@ import {
   isWildcardHost,
   issueHeadlessServeAccessInfo,
 } from "./startupAccess.ts";
+import { SandboxSubmissions } from "./sandbox/SandboxSubmissions.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
   "ServerRuntimeStartupError",
@@ -908,6 +909,7 @@ export const make = (options?: StartupOptions) =>
     const providerSessionDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
     const crypto = yield* Crypto.Crypto;
     const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+    const sandboxSubmissions = yield* SandboxSubmissions;
 
     const commandGate = yield* makeCommandGate;
     const httpListening = yield* Deferred.make<void>();
@@ -968,6 +970,14 @@ export const make = (options?: StartupOptions) =>
 
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
       yield* runStartupPhase("worktree-setups.reconcile", reconcileWorktreeSetups);
+      yield* runStartupPhase(
+        "sandbox-submissions.resume",
+        sandboxSubmissions.resume.pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("failed to resume sandbox submissions", { cause }),
+          ),
+        ),
+      );
 
       yield* Effect.logDebug("startup phase: syncing clean projects");
       yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);

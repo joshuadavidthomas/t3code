@@ -39,6 +39,7 @@ import { makeProviderRegistryLayer } from "../src/provider/testUtils/providerReg
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
 import { ServerSettingsService } from "../src/serverSettings.ts";
 import * as StorageCleanup from "../src/storageCleanup.ts";
+import { SpriteActivityHold } from "../src/sandbox/SpriteActivityHold.ts";
 import { makeProviderServiceLive } from "../src/provider/Layers/ProviderService.ts";
 import { makeCodexAdapter } from "../src/provider/Layers/CodexAdapter.ts";
 import {
@@ -422,6 +423,12 @@ export const makeOrchestrationIntegrationHarness = (
           publishThread: () => Effect.void,
           requestCatchUp: () => Effect.void,
           start: () => Effect.void,
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(SpriteActivityHold, {
+          start: () => Effect.void,
+          drain: Effect.void,
         }),
       ),
     );

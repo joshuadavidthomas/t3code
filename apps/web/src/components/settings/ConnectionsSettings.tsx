@@ -1,5 +1,6 @@
 import {
   ChevronsLeftRightEllipsisIcon,
+  CloudIcon,
   EllipsisIcon,
   PlusIcon,
   QrCodeIcon,
@@ -77,7 +78,15 @@ import {
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
+import {
+  SANDBOX_PROVIDER_LABELS,
+  SandboxConfigurationForm,
+  SandboxRegistrationRow,
+  useSandboxConfiguration,
+} from "./SandboxSettings";
+import { SandboxResourceRows } from "./SandboxResourceRows";
 import { Input } from "../ui/input";
+import { Badge } from "../ui/badge";
 import { CommandShortcut } from "../ui/command";
 import {
   Autocomplete,
@@ -376,8 +385,9 @@ function parsePairingUrlFields(
 
     const pairingCode = getPairingTokenFromUrl(url);
     if (!pairingCode) return null;
+    const backendUrl = new URL(".", url);
     return {
-      host: url.origin,
+      host: backendUrl.toString(),
       pairingCode,
     };
   } catch {
@@ -1807,17 +1817,19 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
 function CloudRemoteEnvironmentRows({
   primaryEnvironmentId,
   savedEnvironments,
+  hasSandboxProvider,
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
+  readonly hasSandboxProvider: boolean;
 }) {
   return hasCloudPublicConfig() ? (
     <CloudEnvironmentConnectRows
       primaryEnvironmentId={primaryEnvironmentId}
       savedEnvironments={savedEnvironments}
-      empty={<EmptyRemoteEnvironments />}
+      empty={hasSandboxProvider ? null : <EmptyRemoteEnvironments />}
     />
-  ) : savedEnvironments.length === 0 ? (
+  ) : savedEnvironments.length === 0 && !hasSandboxProvider ? (
     <EmptyRemoteEnvironments cloudEnabled={false} />
   ) : null;
 }
@@ -1957,7 +1969,12 @@ export function ConnectionsSettings() {
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
-  const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
+  const [selectedSandboxConfigurationId, setSelectedSandboxConfigurationId] = useState<
+    string | null
+  >(null);
+  const [selectedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh" | "sandbox">(
+    "remote",
+  );
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
@@ -2007,6 +2024,24 @@ export function ConnectionsSettings() {
     DesktopServerExposureState["mode"] | null
   >(null);
   const primaryServerConfig = primaryEnvironment?.serverConfig ?? null;
+  const sandboxAvailable =
+    primaryServerConfig?.environment.capabilities.sandboxConfiguration === true;
+  const sandboxHost = useSandboxConfiguration(primaryEnvironmentId, sandboxAvailable);
+  const [sandboxResources, setSandboxResources] = useState<Record<string, boolean>>({});
+  const handleSandboxResourcesChange = useCallback((environmentId: string, present: boolean) => {
+    setSandboxResources((current) =>
+      current[environmentId] === present ? current : { ...current, [environmentId]: present },
+    );
+  }, []);
+  const selectedSandboxConfiguration =
+    sandboxHost.configurations.find(
+      (configuration) => configuration.id === selectedSandboxConfigurationId,
+    ) ?? null;
+  const selectedSandboxProviderLabel = selectedSandboxConfiguration
+    ? SANDBOX_PROVIDER_LABELS[selectedSandboxConfiguration.provider]
+    : null;
+  const savedBackendMode =
+    selectedBackendMode === "sandbox" && !sandboxAvailable ? "remote" : selectedBackendMode;
   const primaryVersionMismatch = resolveServerConfigVersionMismatch(primaryServerConfig);
   const primaryServerUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(primaryEnvironmentId),
@@ -2602,7 +2637,7 @@ export function ConnectionsSettings() {
   }, []);
 
   const renderConnectionModeCard = (input: {
-    readonly mode: "remote" | "ssh";
+    readonly mode: "remote" | "ssh" | "sandbox";
     readonly title: string;
     readonly description: string;
     readonly icon?: ReactNode;
@@ -2634,7 +2669,14 @@ export function ConnectionsSettings() {
           </span>
         ) : null}
         <span className="min-w-0">
-          <span className="block text-sm font-medium text-foreground">{input.title}</span>
+          <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-foreground">
+            {input.title}
+            {input.mode === "sandbox" ? (
+              <Badge variant="warning" size="sm" className="shrink-0">
+                Early Access
+              </Badge>
+            ) : null}
+          </span>
           <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
             {input.description}
           </span>
@@ -3694,6 +3736,7 @@ export function ConnectionsSettings() {
               open={addBackendDialogOpen}
               onOpenChange={(open) => {
                 setAddBackendDialogOpen(open);
+                if (open) setSavedBackendMode("remote");
                 if (!open) {
                   setSavedBackendError(null);
                 }
@@ -3717,11 +3760,20 @@ export function ConnectionsSettings() {
               <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
                 <DialogHeader>
                   <DialogTitle>Add Environment</DialogTitle>
-                  <DialogDescription>Pair another environment to this client.</DialogDescription>
+                  <DialogDescription>
+                    {savedBackendMode === "sandbox"
+                      ? "Connect a sandbox provider."
+                      : "Pair another environment to this client."}
+                  </DialogDescription>
                 </DialogHeader>
                 <DialogPanel>
                   <div className="space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
+                    <div
+                      className={cn(
+                        "grid gap-3 sm:grid-cols-2",
+                        desktopBridge && sandboxAvailable && "sm:grid-cols-3",
+                      )}
+                    >
                       {renderConnectionModeCard({
                         mode: "remote",
                         title: "Remote link",
@@ -3737,9 +3789,36 @@ export function ConnectionsSettings() {
                             icon: <TerminalIcon aria-hidden className="size-4" />,
                           })
                         : null}
+                      {sandboxAvailable
+                        ? renderConnectionModeCard({
+                            mode: "sandbox",
+                            title: "Sandbox",
+                            description: "Use for on-demand workspaces.",
+                            icon: <CloudIcon aria-hidden className="size-4" />,
+                          })
+                        : null}
                     </div>
                     <AnimatedHeight>
-                      {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
+                      {savedBackendMode === "sandbox" && primaryEnvironmentId ? (
+                        sandboxHost.loading ? (
+                          <p>Loading…</p>
+                        ) : sandboxHost.error ? (
+                          <p role="alert">{sandboxHost.error}</p>
+                        ) : (
+                          <SandboxConfigurationForm
+                            key={primaryEnvironmentId}
+                            environmentId={primaryEnvironmentId}
+                            configuration={null}
+                            onSaved={() => {
+                              setAddBackendDialogOpen(false);
+                            }}
+                          />
+                        )
+                      ) : savedBackendMode === "ssh" ? (
+                        renderSshFields()
+                      ) : (
+                        renderRemoteModeBody()
+                      )}
                     </AnimatedHeight>
                   </div>
                 </DialogPanel>
@@ -3757,10 +3836,66 @@ export function ConnectionsSettings() {
             onRemove={handleRemoveSavedBackend}
           />
         ))}
+        <SandboxResourceRows onResourcesChange={handleSandboxResourcesChange} />
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
+          hasSandboxProvider={
+            (sandboxAvailable && sandboxHost.configurations.length > 0) ||
+            Object.values(sandboxResources).some(Boolean)
+          }
         />
+        {sandboxAvailable && (sandboxHost.configurations.length > 0 || sandboxHost.error) ? (
+          <>
+            {sandboxHost.error ? (
+              <div role="alert" className="flex items-center justify-between gap-3 px-4 py-3">
+                <p className="text-xs text-destructive">
+                  Could not load sandbox providers: {sandboxHost.error}
+                </p>
+                <Button size="sm" variant="outline" onClick={sandboxHost.reload}>
+                  Retry
+                </Button>
+              </div>
+            ) : null}
+            {primaryEnvironmentId ? (
+              <>
+                {sandboxHost.configurations.map((configuration) => (
+                  <SandboxRegistrationRow
+                    key={configuration.id}
+                    environmentId={primaryEnvironmentId}
+                    configuration={configuration}
+                    onEdit={() => setSelectedSandboxConfigurationId(configuration.id)}
+                  />
+                ))}
+                <Dialog
+                  open={selectedSandboxConfiguration !== null}
+                  onOpenChange={(open) => {
+                    if (!open) setSelectedSandboxConfigurationId(null);
+                  }}
+                >
+                  <DialogPopup>
+                    <DialogHeader>
+                      <DialogTitle>Edit {selectedSandboxProviderLabel}</DialogTitle>
+                      <DialogDescription>
+                        Update your {selectedSandboxProviderLabel} connection.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogPanel>
+                      {selectedSandboxConfiguration ? (
+                        <SandboxConfigurationForm
+                          key={selectedSandboxConfiguration.id}
+                          environmentId={primaryEnvironmentId}
+                          configuration={selectedSandboxConfiguration}
+                          onSaved={() => setSelectedSandboxConfigurationId(null)}
+                        />
+                      ) : null}
+                    </DialogPanel>
+                  </DialogPopup>
+                </Dialog>
+              </>
+            ) : null}
+          </>
+        ) : null}
       </SettingsSection>
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />

@@ -43,7 +43,7 @@ import { InlineButton } from "../ui/button";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
-  type ProviderInstanceEntry,
+  type ProviderModelPickerEntry,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 
@@ -80,7 +80,7 @@ export function resolveModelPickerSelectedModel(input: {
 }
 
 export function shouldIncludeModelPickerOption(input: {
-  readonly entry: ProviderInstanceEntry;
+  readonly entry: ProviderModelPickerEntry;
   readonly option: ModelEsque;
   readonly activeInstanceId: ProviderInstanceId;
   readonly activeModel: string;
@@ -90,6 +90,7 @@ export function shouldIncludeModelPickerOption(input: {
   }
   if (isProviderInstancePickerReady(input.entry)) return true;
   return (
+    !("source" in input.entry) &&
     input.entry.enabled &&
     (input.entry.driverKind === "opencode" || input.entry.driverKind === "antigravity") &&
     input.entry.instanceId === input.activeInstanceId &&
@@ -99,9 +100,10 @@ export function shouldIncludeModelPickerOption(input: {
 }
 
 export function shouldOfferModelPickerSetup(
-  entry: ProviderInstanceEntry,
+  entry: ProviderModelPickerEntry,
   options: ReadonlyArray<ModelEsque>,
 ): boolean {
+  if ("source" in entry) return false;
   return (
     entry.enabled &&
     entry.status !== "disabled" &&
@@ -114,7 +116,7 @@ export function shouldOfferModelPickerSetup(
 }
 
 export function adjacentModelPickerProvider(input: {
-  entries: ReadonlyArray<ProviderInstanceEntry>;
+  entries: ReadonlyArray<ProviderModelPickerEntry>;
   selectedInstanceId: ProviderInstanceId | "favorites";
   direction: 1 | -1;
   disabledInstanceIds: ReadonlySet<ProviderInstanceId> | undefined;
@@ -167,7 +169,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
    * the sidebar (one button per instance) and to resolve display names
    * for the locked-mode header.
    */
-  instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  instanceEntries: ReadonlyArray<ProviderModelPickerEntry>;
   keybindings?: ResolvedKeybindingsConfig;
   /**
    * Model options per instance. Keyed by `ProviderInstanceId` so the
@@ -180,6 +182,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   onRequestClose?: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
+  favoriteModelsByInstance?: ReadonlyMap<ProviderInstanceId, readonly string[]>;
+  onFavoriteModelsChange?: (instanceId: ProviderInstanceId, models: readonly string[]) => void;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const {
@@ -196,7 +200,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const modelListRef = useRef<LegendListRef | null>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
-  const favorites = useClientSettings((s) => s.favorites ?? []);
+  const deviceFavorites = useClientSettings((s) => s.favorites ?? []);
+  const { favoriteModelsByInstance } = props;
+  const favorites = useMemo(
+    () =>
+      favoriteModelsByInstance
+        ? Array.from(favoriteModelsByInstance, ([provider, models]) =>
+            models.map((model) => ({ provider, model })),
+          ).flat()
+        : deviceFavorites,
+    [deviceFavorites, favoriteModelsByInstance],
+  );
   const activeEntry = props.instanceEntries.find(
     (entry) => entry.instanceId === props.activeInstanceId,
   );
@@ -319,11 +333,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [instanceEntries],
   );
   const matchesLockedProvider = useCallback(
-    (entry: Pick<ProviderInstanceEntry, "driverKind" | "continuationGroupKey">): boolean => {
+    (entry: ProviderModelPickerEntry | ModelPickerItem): boolean => {
       if (props.lockedProvider === null) return true;
       if (entry.driverKind !== props.lockedProvider) return false;
       if (!props.lockedContinuationGroupKey) return true;
-      return entry.continuationGroupKey === props.lockedContinuationGroupKey;
+      return (
+        ("continuationGroupKey" in entry ? entry.continuationGroupKey : undefined) ===
+        props.lockedContinuationGroupKey
+      );
     },
     [props.lockedContinuationGroupKey, props.lockedProvider],
   );
@@ -387,7 +404,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
           ...(entry.accentColor ? { instanceAccentColor: entry.accentColor } : {}),
-          ...(entry.continuationGroupKey
+          ...("continuationGroupKey" in entry && entry.continuationGroupKey
             ? { continuationGroupKey: entry.continuationGroupKey }
             : {}),
         });
@@ -415,8 +432,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (!isLocked) {
       return enabledEntries;
     }
-    const available: ProviderInstanceEntry[] = [];
-    const disabled: ProviderInstanceEntry[] = [];
+    const available: ProviderModelPickerEntry[] = [];
+    const disabled: ProviderModelPickerEntry[] = [];
     for (const entry of enabledEntries) {
       if (matchesLockedProvider(entry)) {
         available.push(entry);
@@ -630,6 +647,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const toggleFavorite = useCallback(
     (instanceId: ProviderInstanceId, model: string) => {
+      if (props.favoriteModelsByInstance) {
+        const current = props.favoriteModelsByInstance.get(instanceId) ?? [];
+        props.onFavoriteModelsChange?.(
+          instanceId,
+          current.includes(model)
+            ? current.filter((favorite) => favorite !== model)
+            : [...current, model],
+        );
+        return;
+      }
       const newFavorites = [...favorites];
       const index = newFavorites.findIndex((f) => f.provider === instanceId && f.model === model);
       if (index >= 0) {
@@ -639,7 +666,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
       updateSettings({ favorites: newFavorites });
     },
-    [favorites, updateSettings],
+    [favorites, props.favoriteModelsByInstance, props.onFavoriteModelsChange, updateSettings],
   );
 
   const modelJumpCommandByKey = useMemo(() => {
@@ -826,7 +853,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             {...(lockedDisabledInstanceIds
               ? {
                   disabledInstanceIds: lockedDisabledInstanceIds,
-                  getDisabledInstanceTooltip: (entry: ProviderInstanceEntry) =>
+                  getDisabledInstanceTooltip: (entry: ProviderModelPickerEntry) =>
                     `${entry.displayName} is unavailable in this thread. Start a new thread to switch providers.`,
                 }
               : {})}
@@ -1029,7 +1056,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 {providerSetupEntries.map((entry) => (
                   <div key={entry.instanceId} className="px-1 py-1.5 text-xs leading-snug">
                     <p className="line-clamp-3 text-muted-foreground">
-                      {getProviderStatusMessage(entry.snapshot)}
+                      {"source" in entry ? null : getProviderStatusMessage(entry.snapshot)}
                     </p>
                     <InlineButton
                       className="mt-1"

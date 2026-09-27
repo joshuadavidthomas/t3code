@@ -69,19 +69,34 @@ export interface ProviderInstanceEntry {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
+/** Account-scoped catalog entry supplied by a runtime without a host probe snapshot. */
+export interface DeclaredProviderInstanceEntry {
+  readonly source: "runtime";
+  readonly instanceId: ProviderInstanceId;
+  readonly driverKind: ProviderDriverKind;
+  readonly displayName: string;
+  readonly accentColor?: string | undefined;
+  readonly isDefault: boolean;
+  readonly showInteractionModeToggle: boolean;
+  readonly models: ReadonlyArray<ServerProviderModel>;
+}
+
+export type ProviderModelPickerEntry = ProviderInstanceEntry | DeclaredProviderInstanceEntry;
+
 /**
  * Whether an instance can currently contribute models to an interactive picker.
  *
  * Disabling an instance updates `enabled` independently, while its previous
  * `ready` probe status can remain in the streamed snapshot until reconciliation.
  */
-export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
+export function isProviderInstancePickerReady(entry: ProviderModelPickerEntry): boolean {
+  if ("source" in entry) return entry.models.length > 0;
   return entry.enabled && entry.isAvailable && entry.status === "ready";
 }
 
 /** Picker rails contain configured, enabled instances only. */
-export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
-  return entry.enabled;
+export function isProviderInstancePickerVisible(entry: ProviderModelPickerEntry): boolean {
+  return "source" in entry ? entry.models.length > 0 : entry.enabled;
 }
 
 /**

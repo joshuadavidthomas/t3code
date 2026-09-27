@@ -18,6 +18,7 @@ import {
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
   hasUnseenCompletion,
+  isDraftDiscardLocked,
   isContextMenuPointerDown,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
@@ -2558,4 +2559,13 @@ describe("navigation after parking a thread", () => {
       ).toBe(expected);
     },
   );
+});
+
+describe("isDraftDiscardLocked", () => {
+  it("locks a sandbox draft only while its setup can still hand off", () => {
+    expect(isDraftDiscardLocked(null)).toBe(false);
+    expect(isDraftDiscardLocked({ snapshot: { phase: "running" } })).toBe(true);
+    expect(isDraftDiscardLocked({ snapshot: { phase: "done" } })).toBe(true);
+    expect(isDraftDiscardLocked({ snapshot: { phase: "failed" } })).toBe(false);
+  });
 });

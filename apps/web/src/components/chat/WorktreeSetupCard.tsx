@@ -27,6 +27,7 @@ interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
   /** Interrupts the server-side bootstrap. Hidden once the setup has settled. */
   onCancel: (() => void) | null;
+  onRetry?: (() => void) | null;
   /** Restarts the same message in the project checkout instead of a worktree. */
   onWorkLocally: (() => void) | null;
   /** Reveals the setup script terminal tab. Null when no script ran. */
@@ -103,17 +104,18 @@ function ShimmerOverlay({ children }: { children: ReactNode }) {
 }
 
 function headerLabel(snapshot: WorktreeSetupSnapshot): string {
+  const name = snapshot.kind === "sandbox" ? "Sandbox" : "Worktree";
   switch (snapshot.phase) {
     case "running":
-      return "Setting up worktree…";
+      return `Setting up ${name.toLowerCase()}…`;
     case "done":
       return snapshot.stages.some((stage) => stage.status === "failed")
-        ? "Worktree ready, setup script failed"
-        : "Worktree ready";
+        ? `${name} ready, setup script failed`
+        : `${name} ready`;
     case "failed":
-      return "Worktree setup failed";
+      return `${name} setup failed`;
     case "cancelled":
-      return "Worktree setup cancelled";
+      return `${name} setup cancelled`;
   }
 }
 
@@ -336,6 +338,7 @@ function CollapsedSummaryRow({
 export function WorktreeSetupCard({
   snapshot,
   onCancel,
+  onRetry,
   onWorkLocally,
   onOpenTerminal,
   embedded = false,
@@ -371,7 +374,10 @@ export function WorktreeSetupCard({
     setupStage !== undefined && (setupStage.status === "running" || setupStage.status === "failed");
 
   return (
-    <section aria-label="Worktree setup" data-worktree-setup-phase={snapshot.phase}>
+    <section
+      aria-label={snapshot.kind === "sandbox" ? "Sandbox setup" : "Worktree setup"}
+      data-worktree-setup-phase={snapshot.phase}
+    >
       {showHeader ? <SetupHeaderRow snapshot={snapshot} totalElapsed={totalElapsed} /> : null}
       {collapsed ? (
         <CollapsedSummaryRow snapshot={snapshot} totalElapsed={totalElapsed} />
@@ -421,6 +427,11 @@ export function WorktreeSetupCard({
           <Button type="button" size="xs" variant="ghost-muted" onClick={onWorkLocally}>
             <LaptopIcon aria-hidden />
             Work locally
+          </Button>
+        ) : null}
+        {onRetry && snapshot.phase === "failed" ? (
+          <Button type="button" size="xs" variant="ghost-muted" onClick={onRetry}>
+            Retry
           </Button>
         ) : null}
         {onCancel && running ? (

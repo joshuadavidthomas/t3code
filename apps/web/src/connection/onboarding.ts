@@ -1,14 +1,29 @@
-import { ConnectionOnboarding } from "@t3tools/client-runtime/connection";
+import { ConnectionOnboarding, EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
 } from "@t3tools/client-runtime/state/runtime";
-import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
+import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import { connectionAtomRuntime } from "./runtime";
 
 const onboardingScheduler = createAtomCommandScheduler();
+
+export const awaitEnvironmentConnection = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:await-connected",
+  execute: (environmentId: EnvironmentId) =>
+    Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry;
+      yield* registry.stateChanges(environmentId).pipe(
+        Stream.filter((state) => state.phase === "connected"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.timeout("60 seconds"),
+      );
+    }),
+});
 
 export const connectPairing = createRuntimeCommand(connectionAtomRuntime, {
   label: "web:connection:connect-pairing",

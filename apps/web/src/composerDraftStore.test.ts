@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import {
   defaultInstanceIdForDriver,
   EnvironmentId,
+  CommandId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -1664,6 +1665,133 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("promote me");
   });
 
+  it("preserves sandbox intent through branch selection and persistence, and clears it on retarget", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "Keep this prompt");
+    store.setDraftThreadContext(draftId, {
+      envMode: "worktree",
+      sandboxTarget: { ownerEnvironmentId: TEST_ENVIRONMENT_ID, configurationId: "sandbox" },
+    });
+    store.setDraftThreadContext(draftId, {
+      branch: "feature/sandbox",
+      envMode: "worktree",
+      worktreePath: null,
+      projectRef,
+    });
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    const hydrated = useComposerDraftStore.persist.getOptions().merge!(
+      persisted,
+      useComposerDraftStore.getState(),
+    );
+    expect(hydrated.draftThreadsByThreadKey[draftId]).toMatchObject({
+      sandboxTarget: { ownerEnvironmentId: TEST_ENVIRONMENT_ID, configurationId: "sandbox" },
+      branch: "feature/sandbox",
+    });
+    store.setDraftThreadContext(draftId, {
+      projectRef: scopeProjectRef(OTHER_TEST_ENVIRONMENT_ID, projectId),
+      envMode: "local",
+    });
+    expect(store.getDraftThread(draftId)).toMatchObject({ sandboxTarget: null, envMode: "local" });
+    expect(store.getComposerDraft(draftId)?.prompt).toBe("Keep this prompt");
+  });
+
+  it("restores named sandbox targets independently for two accounts", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, localDraftId, { threadId });
+    store.setProjectDraftThreadId(remoteProjectRef, remoteDraftId, { threadId: otherThreadId });
+    store.setDraftThreadContext(localDraftId, {
+      sandboxTarget: {
+        ownerEnvironmentId: TEST_ENVIRONMENT_ID,
+        configurationId: "local-sandbox",
+      },
+    });
+    store.setDraftThreadContext(remoteDraftId, {
+      sandboxTarget: {
+        ownerEnvironmentId: OTHER_TEST_ENVIRONMENT_ID,
+        configurationId: "remote-sandbox",
+      },
+    });
+
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    const hydrated = useComposerDraftStore.persist.getOptions().merge!(
+      persisted,
+      useComposerDraftStore.getState(),
+    );
+
+    expect(hydrated.draftThreadsByThreadKey[localDraftId]).toMatchObject({
+      sandboxTarget: {
+        ownerEnvironmentId: TEST_ENVIRONMENT_ID,
+        configurationId: "local-sandbox",
+      },
+    });
+    expect(hydrated.draftThreadsByThreadKey[remoteDraftId]).toMatchObject({
+      sandboxTarget: {
+        ownerEnvironmentId: OTHER_TEST_ENVIRONMENT_ID,
+        configurationId: "remote-sandbox",
+      },
+    });
+  });
+
+  it("preserves a named target across projects on its owner and clears it across owners", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setDraftThreadContext(draftId, {
+      sandboxTarget: {
+        ownerEnvironmentId: TEST_ENVIRONMENT_ID,
+        configurationId: "shared-owner-target",
+      },
+    });
+
+    store.setDraftThreadContext(draftId, { projectRef: otherProjectRef });
+    expect(store.getDraftThread(draftId)).toMatchObject({
+      sandboxTarget: {
+        ownerEnvironmentId: TEST_ENVIRONMENT_ID,
+        configurationId: "shared-owner-target",
+      },
+    });
+
+    store.setDraftThreadContext(draftId, { projectRef: remoteProjectRef });
+    expect(store.getDraftThread(draftId)).toMatchObject({ sandboxTarget: null });
+  });
+
+  it("clears named targets for ordinary selections", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    const target = {
+      ownerEnvironmentId: TEST_ENVIRONMENT_ID,
+      configurationId: "named-target",
+    };
+
+    store.setDraftThreadContext(draftId, { sandboxTarget: target });
+    store.setDraftThreadContext(draftId, { worktreePath: "/tmp/ordinary-worktree" });
+    expect(store.getDraftThread(draftId)).toMatchObject({ sandboxTarget: null });
+
+    store.setDraftThreadContext(draftId, { sandboxTarget: target });
+    store.setDraftThreadContext(draftId, { sandboxTarget: null });
+    expect(store.getDraftThread(draftId)).toMatchObject({ sandboxTarget: null });
+  });
+
+  it("hydrates a legacy target-less sandbox draft as an ordinary draft", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    const legacy = {
+      ...persisted,
+      draftThreadsByThreadKey: {
+        ...persisted.draftThreadsByThreadKey,
+        [draftId]: { ...persisted.draftThreadsByThreadKey[draftId], sandbox: true },
+      },
+    };
+    const hydrated = useComposerDraftStore.persist.getOptions().merge!(
+      legacy,
+      useComposerDraftStore.getState(),
+    );
+
+    expect(hydrated.draftThreadsByThreadKey[draftId]).toMatchObject({ sandboxTarget: null });
+    expect(hydrated.draftThreadsByThreadKey[draftId]).not.toHaveProperty("sandbox");
+  });
+
   it("updates branch context on an existing draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {
@@ -1685,6 +1813,88 @@ describe("composerDraftStore project draft thread mapping", () => {
       worktreePath: "/tmp/feature-next",
       envMode: "worktree",
     });
+  });
+
+  it("retains sandbox progress and submitted prompt when the draft moves to its new environment", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    const setup = {
+      prompt: "Build in my sandbox",
+      messageId: MessageId.make("sandbox-send"),
+      submission: {
+        key: "sandbox-durable",
+        sourceProjectId: projectId,
+        sourceBranch: "main",
+        commandId: CommandId.make("sandbox:send:durable"),
+        intent: "foreground",
+        handoff: "ready",
+      },
+      snapshot: {
+        kind: "sandbox",
+        threadId,
+        phase: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        endedAt: null,
+        branch: "main",
+        baseRef: "main",
+        worktreePath: null,
+        setupScript: null,
+        error: null,
+        sequence: 4,
+        stages: [
+          {
+            id: "clone",
+            status: "running",
+            startedAt: "2026-01-01T00:00:04Z",
+            endedAt: null,
+            percent: null,
+            detail: null,
+            tail: [],
+          },
+        ],
+      },
+    } as const;
+    store.setDraftThreadContext(draftId, { sandboxSetup: setup });
+    store.setPrompt(draftId, setup.prompt);
+    store.clearComposerContent(draftId);
+    expect(store.getComposerDraft(draftId)?.prompt ?? "").toBe("");
+    store.setDraftThreadContext(draftId, {
+      projectRef: scopeProjectRef(OTHER_TEST_ENVIRONMENT_ID, projectId),
+      envMode: "local",
+      sandboxSetup: setup,
+    });
+    // Remap first: pending setup is reserved work even though send cleared the
+    // editable composer, so both the session and its original send survive.
+    store.setProjectDraftThreadId(projectRef, DraftId.make("another-draft"), {
+      threadId: ThreadId.make("another-thread"),
+    });
+    const persisted = JSON.parse(
+      JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+    );
+    const hydrated = useComposerDraftStore.persist.getOptions().merge!(
+      persisted,
+      useComposerDraftStore.getState(),
+    );
+    expect(hydrated.draftThreadsByThreadKey[draftId]?.sandboxSetup).toEqual(setup);
+    expect(hydrated.draftThreadsByThreadKey[draftId]?.environmentId).toBe(
+      OTHER_TEST_ENVIRONMENT_ID,
+    );
+    expect(hydrated.draftThreadsByThreadKey[draftId]?.sandboxSetup).toMatchObject({
+      prompt: "Build in my sandbox",
+      messageId: MessageId.make("sandbox-send"),
+      submission: {
+        commandId: CommandId.make("sandbox:send:durable"),
+        key: "sandbox-durable",
+      },
+      snapshot: { threadId },
+    });
+    expect(store.getDraftSession(draftId)?.sandboxSetup).toEqual(setup);
+
+    store.setDraftThreadContext(draftId, { envMode: "worktree", sandboxTarget: null });
+    expect(store.getDraftSession(draftId)?.sandboxSetup).toBeNull();
+    store.setDraftThreadContext(draftId, { sandboxSetup: setup });
+    store.setDraftThreadContext(draftId, { projectRef });
+    expect(store.getDraftSession(draftId)?.sandboxSetup).toBeNull();
   });
 
   it("stores the start-from-origin choice with the draft thread", () => {

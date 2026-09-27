@@ -150,7 +150,7 @@ function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
 }
 
-function redactProviderEnvironmentVariable(
+export function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
   if (!variable.sensitive) {

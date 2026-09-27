@@ -9,7 +9,14 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveSettingsScope } from "./settingsScope";
-import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
+import {
+  retainSettingsScope,
+  validateSettingsRouteSearch,
+  validateProviderSettingsSearch,
+  selectSandboxProviderTarget,
+  sandboxProviderMenuValue,
+  parseSandboxProviderMenuValue,
+} from "./settingsScopeNavigation";
 
 const checkoutSearch = {
   project: "repository:t3code",
@@ -37,14 +44,7 @@ function createSettingsRouter(initialEntry = "/settings/general") {
   const providers = createRoute({
     getParentRoute: () => settings,
     path: "providers",
-    validateSearch: (raw: Record<string, unknown>) => ({
-      ...(typeof raw.environmentId === "string" && raw.environmentId.trim()
-        ? { environmentId: EnvironmentId.make(raw.environmentId) }
-        : {}),
-      ...(typeof raw.instanceId === "string" && raw.instanceId.trim()
-        ? { instanceId: ProviderInstanceId.make(raw.instanceId) }
-        : {}),
-    }),
+    validateSearch: validateProviderSettingsSearch,
   });
   const legacyProject = createRoute({
     getParentRoute: () => root,
@@ -67,6 +67,72 @@ function createSettingsRouter(initialEntry = "/settings/general") {
 }
 
 describe("settings scope navigation", () => {
+  it("keeps project and registration through reload/history, and drops registration on category navigation", async () => {
+    const router = createSettingsRouter();
+    await router.navigate({ to: "/settings/providers", search: checkoutSearch });
+    await router.navigate({
+      to: "/settings/providers",
+      search: selectSandboxProviderTarget(
+        EnvironmentId.make("owner-two"),
+        "registration-one",
+        checkoutSearch,
+      ),
+    });
+    const selected = {
+      project: checkoutSearch.project,
+      machine: "owner-two",
+      sandbox: "registration-one",
+    };
+    expect(router.state.location.search).toEqual(selected);
+    const reloaded = createSettingsRouter(router.state.location.href);
+    await reloaded.load();
+    expect(reloaded.state.location.search).toEqual(selected);
+    await router.navigate({
+      to: "/settings/providers",
+      search: { machine: undefined, project: undefined, checkout: undefined },
+    });
+    expect(router.state.location.search).toEqual({});
+    router.history.back();
+    await router.load();
+    expect(router.state.location.search).toEqual(selected);
+    await router.navigate({ to: "/settings/general" });
+    expect(router.state.location.search).toEqual({
+      project: checkoutSearch.project,
+      machine: "owner-two",
+    });
+    await router.navigate({ to: "/settings/providers" });
+    expect(router.state.location.search).toEqual({
+      project: checkoutSearch.project,
+      machine: "owner-two",
+    });
+  });
+
+  it("keeps unavailable registration identities explicit, and does not substitute the owner", async () => {
+    const router = createSettingsRouter("/settings/providers?machine=missing&sandbox=removed");
+    await router.load();
+    expect(router.state.location.search).toEqual({ machine: "missing", sandbox: "removed" });
+    const orphan = createSettingsRouter("/settings/providers?sandbox=removed");
+    await orphan.load();
+    expect(orphan.state.location.search).toEqual({ sandbox: "removed" });
+  });
+
+  it("encodes both owner and registration identity without delimiter collisions", () => {
+    const value = sandboxProviderMenuValue("owner:one", "registration:two");
+    expect(parseSandboxProviderMenuValue(value)).toEqual({
+      ownerEnvironmentId: "owner:one",
+      configurationId: "registration:two",
+    });
+    for (const invalid of [
+      "all",
+      "owner:one",
+      "sandbox:bad-json",
+      'sandbox:["owner"]',
+      'sandbox:[1,"registration"]',
+    ]) {
+      expect(parseSandboxProviderMenuValue(invalid)).toBeNull();
+    }
+  });
+
   it("replaces the default scope with an explicit environment, then replaces it with a project", async () => {
     const router = createSettingsRouter();
     await router.load();

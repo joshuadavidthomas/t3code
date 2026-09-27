@@ -800,6 +800,27 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "sandbox-settings",
+    title: "Sandbox (Early Access)",
+    to: "/settings/connections",
+    targetId: "remote-environments",
+    searchTerms: ["sprites claude isolated environment configuration"],
+  },
+  {
+    id: "sandbox-account",
+    title: "Sprites registration",
+    to: "/settings/connections",
+    targetId: "remote-environments",
+    searchTerms: ["sprites credential token verify registration"],
+  },
+  {
+    id: "sandbox-claude",
+    title: "Sandbox providers",
+    to: "/settings/providers",
+    targetId: "providers",
+    searchTerms: ["sprites claude codex sandbox token credentials models provider setup"],
+  },
+  {
     id: "remote-environments",
     title: "Environments",
     to: "/settings/connections",

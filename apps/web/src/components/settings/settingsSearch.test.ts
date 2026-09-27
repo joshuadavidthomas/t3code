@@ -364,6 +364,21 @@ describe("searchSettings", () => {
 });
 
 describe("settings search targets", () => {
+  it("separates sandbox host search from provider setup", () => {
+    expect(searchSettings("sprites environment")[0]).toMatchObject({
+      id: "sandbox-settings",
+      to: "/settings/connections",
+    });
+    expect(getSettingsSearchTargetScope("sandbox-claude")).toMatchObject({
+      title: "Sandbox providers",
+      scope: null,
+    });
+    expect(searchSettings("sandbox token")[0]).toMatchObject({
+      to: "/settings/providers",
+      targetId: "providers",
+    });
+  });
+
   it.each([
     "auto-settle-inactive-threads",
     "auto-settle-merged-threads",

@@ -24,6 +24,13 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 
+/** A sandbox draft stays pinned while its setup can still hand off; a failed one is the user's to discard. */
+export function isDraftDiscardLocked(
+  setup: { readonly snapshot: { readonly phase: string } } | null | undefined,
+): boolean {
+  return setup != null && setup.snapshot.phase !== "failed" && setup.snapshot.phase !== "cancelled";
+}
+
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
   readonly currentThreadKey: string | null;

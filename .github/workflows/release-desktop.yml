@@ -479,17 +479,33 @@ jobs:
             printf '%s' "$APPLE_API_KEY" > "$key_path"
             export APPLE_API_KEY="$key_path"
           fi
+          sandbox_runtime=()
+          if [[ "${{ inputs.platform }}" == "linux" && "${{ inputs.arch }}" == "x64" ]]; then
+            sandbox_runtime=(--sandbox-runtime)
+          fi
           node scripts/build-cli-archive.ts \
             --platform "${{ inputs.platform }}" \
             --arch "${{ inputs.arch }}" \
             --version "${{ inputs.version }}" \
             --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
-            --output-dir release-cli
+            --output-dir release-cli \
+            "${sandbox_runtime[@]}"
 
       - name: Smoke-test CLI archive
         if: inputs.cli_archive
         shell: bash
-        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ inputs.version }}"
+        run: |
+          shopt -s nullglob
+          archives=(release-cli/*.tar.gz release-cli/*.zip)
+          [[ ${#archives[@]} -eq 1 ]]
+          sandbox_runtime=()
+          if [[ "${{ inputs.platform }}" == "linux" && "${{ inputs.arch }}" == "x64" ]]; then
+            sandbox_runtime=(--sandbox-runtime)
+          fi
+          node scripts/smoke-cli-archive.ts \
+            --archive "${archives[0]}" \
+            --expect-version "${{ inputs.version }}" \
+            "${sandbox_runtime[@]}"
 
       - name: Upload CLI archive
         if: inputs.cli_archive

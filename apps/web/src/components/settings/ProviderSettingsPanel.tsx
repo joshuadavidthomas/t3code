@@ -181,7 +181,7 @@ const providerCardHeightClassName =
  * Same chrome as the provider editor (section heading, floating device tabs,
  * tall card) for states that cannot render provider settings yet.
  */
-function ProviderSettingsPlaceholder({
+export function ProviderSettingsPlaceholder({
   deviceTabs,
   icon,
   title,
@@ -213,6 +213,46 @@ function ProviderSettingsPlaceholder({
         </Empty>
       </SettingsGroup>
     </SettingsSection>
+  );
+}
+
+/** Shared provider list/editor surface; data and commands belong to its caller. */
+export function ProviderSettingsEditorLayout({
+  list,
+  editor,
+  emptyMessage,
+}: {
+  list: ReactNode;
+  editor: ReactNode;
+  emptyMessage?: string;
+}) {
+  return (
+    <SettingsGroup
+      divided={false}
+      className={cn(
+        providerCardHeightClassName,
+        "overflow-hidden @min-[48rem]/providers:grid @min-[48rem]/providers:grid-cols-[17rem_minmax(0,1fr)]",
+      )}
+    >
+      <div className="border-b border-border/60 bg-muted/10 @min-[48rem]/providers:flex @min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-col @min-[48rem]/providers:border-r @min-[48rem]/providers:border-b-0">
+        <ScrollArea
+          scrollFade
+          chainVerticalScroll
+          className="@min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-1"
+        >
+          <div className="divide-y divide-border/50">{list}</div>
+        </ScrollArea>
+      </div>
+      <div className="min-w-0 @min-[48rem]/providers:min-h-0">
+        {editor ? (
+          <ScrollArea scrollFade chainVerticalScroll className="@min-[48rem]/providers:h-full">
+            <div className="space-y-6 p-4">{editor}</div>
+          </ScrollArea>
+        ) : (
+          <div className="p-6 text-sm text-muted-foreground">{emptyMessage}</div>
+        )}
+      </div>
+    </SettingsGroup>
   );
 }
 
@@ -265,11 +305,16 @@ interface ProviderSettingsTarget {
   readonly environmentId?: EnvironmentId;
   readonly instanceId?: ProviderInstanceId;
   readonly scoped?: boolean;
+  readonly scopeSentence?: ReactNode;
 }
 
 export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
   return (
-    <SettingsPageContainer width="wide" className="@container/providers gap-8">
+    <SettingsPageContainer
+      width="wide"
+      className="@container/providers gap-8"
+      scopeSentence={target.scopeSentence}
+    >
       <ProviderSettingsPanelContent
         key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
         {...target}
@@ -365,39 +410,46 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
             if (environment) setSelectedEnvironmentId(environment.environmentId);
           }}
         >
-          {options.map((environment) => {
-            const machine = resolveEnvironmentMachineKind(environment.serverConfig);
-            const detail = providerEnvironmentDetail(environment);
-            const statusText = connectionStatusTitle(environment.connection);
-            return (
-              <Tooltip key={environment.environmentId}>
-                <TooltipTrigger
-                  render={
-                    <Toggle value={environment.environmentId}>
-                      <EnvironmentMachineIcon
-                        kind={machine}
-                        className="size-3.5 shrink-0"
-                        aria-hidden
-                      />
-                      <span className="max-w-40 truncate">{environment.label}</span>
-                      {environment.connection.phase !== "connected" ? (
-                        <ConnectionStatusDot
-                          dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
-                          pingClassName={connectionPhasePingClassName(environment.connection.phase)}
+          {options
+            .filter(
+              (environment) =>
+                !target.scoped || environment.environmentId === effectiveEnvironmentId,
+            )
+            .map((environment) => {
+              const machine = resolveEnvironmentMachineKind(environment.serverConfig);
+              const detail = providerEnvironmentDetail(environment);
+              const statusText = connectionStatusTitle(environment.connection);
+              return (
+                <Tooltip key={environment.environmentId}>
+                  <TooltipTrigger
+                    render={
+                      <Toggle value={environment.environmentId}>
+                        <EnvironmentMachineIcon
+                          kind={machine}
+                          className="size-3.5 shrink-0"
+                          aria-hidden
                         />
-                      ) : null}
-                      <span className="sr-only">
-                        {detail}, {statusText}
-                      </span>
-                    </Toggle>
-                  }
-                />
-                <TooltipPopup side="top">
-                  {detail} · {statusText}
-                </TooltipPopup>
-              </Tooltip>
-            );
-          })}
+                        <span className="max-w-40 truncate">{environment.label}</span>
+                        {environment.connection.phase !== "connected" ? (
+                          <ConnectionStatusDot
+                            dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
+                            pingClassName={connectionPhasePingClassName(
+                              environment.connection.phase,
+                            )}
+                          />
+                        ) : null}
+                        <span className="sr-only">
+                          {detail}, {statusText}
+                        </span>
+                      </Toggle>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    {detail} · {statusText}
+                  </TooltipPopup>
+                </Tooltip>
+              );
+            })}
         </ToggleGroup>
       </ScrollArea>
     ) : null;
@@ -1023,7 +1075,11 @@ export function EnvironmentProviderSettings({
     <>
       <SettingsSection {...searchableSetting("providers")} variant="plain">
         <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">
-          {deviceTabs}
+          {deviceTabs ?? (
+            <span className="min-w-0 truncate text-xs text-muted-foreground">
+              {environmentLabel}
+            </span>
+          )}
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2">
             {readOnly ? (
               <span className="min-w-0 truncate text-xs text-muted-foreground">
@@ -1082,39 +1138,15 @@ export function EnvironmentProviderSettings({
             />
           </SettingsGroup>
         ) : null}
-        <SettingsGroup
-          divided={false}
-          className={cn(
-            providerCardHeightClassName,
-            "overflow-hidden @min-[48rem]/providers:grid @min-[48rem]/providers:grid-cols-[17rem_minmax(0,1fr)]",
-          )}
-        >
-          <div className="border-b border-border/60 bg-muted/10 @min-[48rem]/providers:flex @min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-col @min-[48rem]/providers:border-r @min-[48rem]/providers:border-b-0">
-            <ScrollArea
-              scrollFade
-              chainVerticalScroll
-              className="@min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-1"
-            >
-              <div className="divide-y divide-border/50">
-                {rows.map((row) => renderProviderInstance(row, "list"))}
-              </div>
-            </ScrollArea>
-          </div>
-
-          <div className="min-w-0 @min-[48rem]/providers:min-h-0">
-            {selectedRow ? (
-              <ScrollArea scrollFade chainVerticalScroll className="@min-[48rem]/providers:h-full">
-                <div className="space-y-6 p-4">{renderProviderInstance(selectedRow, "editor")}</div>
-              </ScrollArea>
-            ) : (
-              <div className="p-6 text-sm text-muted-foreground">
-                {targetInstanceMissing
-                  ? "This provider instance is no longer available on this device."
-                  : "No providers configured."}
-              </div>
-            )}
-          </div>
-        </SettingsGroup>
+        <ProviderSettingsEditorLayout
+          list={rows.map((row) => renderProviderInstance(row, "list"))}
+          editor={selectedRow ? renderProviderInstance(selectedRow, "editor") : null}
+          emptyMessage={
+            targetInstanceMissing
+              ? "This provider instance is no longer available on this device."
+              : "No providers configured."
+          }
+        />
       </SettingsSection>
 
       <UsageProviderSettings

@@ -127,6 +127,13 @@ const registerPairingConnection = Effect.fn(
   const registration = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   yield* registry.register(registration);
+  yield* registry
+    .setEnabled(registration.target.environmentId, true)
+    .pipe(
+      Effect.catchTag("EnvironmentNotRegisteredError", (error) =>
+        Effect.fail(new ConnectionBlockedError({ reason: "configuration", detail: error.message })),
+      ),
+    );
   return registration.target.environmentId;
 });
 

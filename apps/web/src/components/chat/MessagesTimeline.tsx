@@ -296,6 +296,7 @@ interface TimelineRowSharedState {
   expandedSpawnEntryIds: ReadonlySet<string>;
   onOpenAgents: () => void;
   onCancelWorktreeSetup: (() => void) | null;
+  onRetryWorktreeSetup: (() => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   onSteerQueuedMessage: (id: string) => void;
@@ -306,6 +307,7 @@ interface TimelineRowSharedState {
 interface TimelineRowActivityState {
   isWorking: boolean;
   isPreparingWorktree: boolean;
+  isPreparingSandbox: boolean;
   isCompacting: boolean;
   isRevertingCheckpoint: boolean;
   latestTurnId: TurnId | null;
@@ -410,6 +412,7 @@ interface MessagesTimelineProps {
   /** Live bootstrap progress for this thread, or null when none is tracked. */
   worktreeSetup?: WorktreeSetupSnapshot | null;
   onCancelWorktreeSetup?: () => void;
+  onRetryWorktreeSetup?: () => void;
   onWorktreeSetupWorkLocally?: () => void;
   onOpenWorktreeSetupTerminal?: (terminalId: string) => void;
   listRef: React.RefObject<LegendListRef | null>;
@@ -480,6 +483,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
   worktreeSetup = null,
   onCancelWorktreeSetup,
+  onRetryWorktreeSetup,
   onWorktreeSetupWorkLocally,
   onOpenWorktreeSetupTerminal,
   isPreparingWorktree = false,
@@ -1170,6 +1174,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       expandedSpawnEntryIds: paintedExpandedSpawnEntryIds,
       onOpenAgents,
       onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
+      onRetryWorktreeSetup: onRetryWorktreeSetup ?? null,
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
       onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
       onSteerQueuedMessage,
@@ -1206,6 +1211,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       paintedExpandedSpawnEntryIds,
       onOpenAgents,
       onCancelWorktreeSetup,
+      onRetryWorktreeSetup,
       onWorktreeSetupWorkLocally,
       onOpenWorktreeSetupTerminal,
       onSteerQueuedMessage,
@@ -1224,6 +1230,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () => ({
       isWorking,
       isPreparingWorktree,
+      isPreparingSandbox: worktreeSetup?.kind === "sandbox" && worktreeSetup.phase === "running",
       isCompacting,
       isRevertingCheckpoint,
       latestTurnId: latestTurn?.turnId ?? null,
@@ -1235,6 +1242,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [
       backgroundWorktreeSetup,
       isCompacting,
+      worktreeSetup?.kind,
+      worktreeSetup?.phase,
       isRevertingCheckpoint,
       isWorking,
       isPreparingWorktree,
@@ -1766,6 +1775,7 @@ function WorktreeSetupTimelineRow({
       snapshot={row.snapshot}
       embedded={row.embedded}
       onCancel={row.embedded ? null : ctx.onCancelWorktreeSetup}
+      onRetry={row.embedded ? null : ctx.onRetryWorktreeSetup}
       onWorkLocally={
         !row.embedded && row.snapshot.phase === "running" ? ctx.onWorktreeSetupWorkLocally : null
       }
@@ -2529,13 +2539,17 @@ function ProposedPlanTimelineRow({
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
+  const { isCompacting, isPreparingWorktree, isPreparingSandbox, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
   // One span for every label so the setup-to-working handoff swaps text in
   // place instead of remounting the row.
   const shimmer = isPreparingWorktree || isCompacting;
   const label = isPreparingWorktree ? (
-    "Setting up worktree…"
+    isPreparingSandbox ? (
+      "Setting up sandbox…"
+    ) : (
+      "Setting up worktree…"
+    )
   ) : isCompacting ? (
     <CompactingLabel />
   ) : row.createdAt ? (

@@ -527,8 +527,8 @@ describe("resolveCurrentWorkspaceLabel", () => {
 });
 
 describe("resolveLockedWorkspaceLabel", () => {
-  it("uses a shorter label for the main repo checkout", () => {
-    expect(resolveLockedWorkspaceLabel(null, "local")).toBe("Local checkout");
+  it("uses location-neutral wording for a locked checkout on any environment", () => {
+    expect(resolveLockedWorkspaceLabel(null, "local")).toBe("Current checkout");
   });
 
   it("uses a shorter label for an attached worktree", () => {

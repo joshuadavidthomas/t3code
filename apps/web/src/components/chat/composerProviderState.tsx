@@ -55,6 +55,7 @@ type TraitsRenderInput = {
   hidden?: boolean;
   triggerClassName?: string;
   isComposerOwned?: boolean;
+  onModelOptionsChange?: (nextOptions: ReadonlyArray<ProviderOptionSelection> | undefined) => void;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -177,8 +178,10 @@ function renderTraitsControl(
     hidden,
     triggerClassName,
     isComposerOwned,
+    onModelOptionsChange,
   } = input;
-  const hasTarget = threadRef !== undefined || draftId !== undefined;
+  const hasTarget =
+    threadRef !== undefined || draftId !== undefined || onModelOptionsChange !== undefined;
   const { selections: resolvedModelOptions } = resolveComposerOptionSelections(
     models,
     model,
@@ -204,8 +207,9 @@ function renderTraitsControl(
       provider={provider}
       {...(instanceId ? { instanceId } : {})}
       models={models}
-      {...(threadRef ? { threadRef } : {})}
-      {...(draftId ? { draftId } : {})}
+      {...(onModelOptionsChange
+        ? { onModelOptionsChange }
+        : { ...(threadRef ? { threadRef } : {}), ...(draftId ? { draftId } : {}) })}
       model={model}
       modelOptions={resolvedModelOptions}
       prompt={prompt}

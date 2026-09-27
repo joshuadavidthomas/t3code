@@ -30,6 +30,7 @@ import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepA
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
 import { QueuedMessageSender } from "../components/QueuedMessageSender";
+import { SandboxSubmissionCoordinator } from "../components/useSandbox";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
@@ -229,6 +230,7 @@ function RootRouteView() {
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />
           <QueuedMessageSender />
+          <SandboxSubmissionCoordinator />
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
           <SlowRpcRequestToastCoordinator />

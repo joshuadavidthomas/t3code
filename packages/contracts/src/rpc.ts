@@ -1,6 +1,25 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import {
+  SandboxConfiguration,
+  SandboxConfigurationRemoveInput,
+  SandboxConfigurationSaveInput,
+  SandboxProviderInstanceSaveInput,
+  SandboxConfigurationVerifyInput,
+  SandboxConfigurationError,
+} from "./sandbox.ts";
+import {
+  SandboxLaunchOptions,
+  SandboxLaunchOptionsInput,
+  SandboxSubmitInput,
+  SandboxSubmission,
+  SandboxSubmissionListEvent,
+  SandboxSubmissionUpdate,
+  SandboxSubmissionInput,
+  SandboxSubmissionError,
+  SandboxDestinationConnection,
+} from "./sandboxSubmission.ts";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
@@ -370,6 +389,21 @@ export const WS_METHODS = {
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
+  sandboxGetConfiguration: "sandbox.getConfiguration",
+  sandboxSaveConfiguration: "sandbox.saveConfiguration",
+  sandboxSaveProviderInstance: "sandbox.saveProviderInstance",
+  sandboxRemoveConfiguration: "sandbox.removeConfiguration",
+  sandboxVerifyConfiguration: "sandbox.verifyConfiguration",
+  sandboxLaunchOptions: "sandbox.launchOptions",
+  sandboxSubmit: "sandbox.submit",
+  sandboxListSubmissions: "sandbox.listSubmissions",
+  sandboxSubscribeSubmissions: "sandbox.subscribeSubmissions",
+  sandboxGetSubmission: "sandbox.getSubmission",
+  sandboxPairDestination: "sandbox.pairDestination",
+  sandboxRetrySubmission: "sandbox.retrySubmission",
+  sandboxCancelSubmission: "sandbox.cancelSubmission",
+  sandboxDeleteSubmission: "sandbox.deleteSubmission",
+  sandboxSubscribeSubmission: "sandbox.subscribeSubmission",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -586,6 +620,85 @@ const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxGetConfigurationRpc = Rpc.make(WS_METHODS.sandboxGetConfiguration, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(SandboxConfiguration),
+  error: Schema.Union([SandboxConfigurationError, EnvironmentAuthorizationError]),
+});
+const WsSandboxSaveConfigurationRpc = Rpc.make(WS_METHODS.sandboxSaveConfiguration, {
+  payload: SandboxConfigurationSaveInput,
+  success: SandboxConfiguration,
+  error: Schema.Union([SandboxConfigurationError, EnvironmentAuthorizationError]),
+});
+const WsSandboxSaveProviderInstanceRpc = Rpc.make(WS_METHODS.sandboxSaveProviderInstance, {
+  payload: SandboxProviderInstanceSaveInput,
+  success: SandboxConfiguration,
+  error: Schema.Union([SandboxConfigurationError, EnvironmentAuthorizationError]),
+});
+const WsSandboxRemoveConfigurationRpc = Rpc.make(WS_METHODS.sandboxRemoveConfiguration, {
+  payload: SandboxConfigurationRemoveInput,
+  success: Schema.Void,
+  error: Schema.Union([SandboxConfigurationError, EnvironmentAuthorizationError]),
+});
+const WsSandboxVerifyConfigurationRpc = Rpc.make(WS_METHODS.sandboxVerifyConfiguration, {
+  payload: SandboxConfigurationVerifyInput,
+  success: SandboxConfiguration,
+  error: Schema.Union([SandboxConfigurationError, EnvironmentAuthorizationError]),
+});
+
+const WsSandboxLaunchOptionsRpc = Rpc.make(WS_METHODS.sandboxLaunchOptions, {
+  payload: SandboxLaunchOptionsInput,
+  success: SandboxLaunchOptions,
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+});
+const WsSandboxSubmitRpc = Rpc.make(WS_METHODS.sandboxSubmit, {
+  payload: SandboxSubmitInput,
+  success: SandboxSubmission,
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+});
+const WsSandboxGetSubmissionRpc = Rpc.make(WS_METHODS.sandboxGetSubmission, {
+  payload: SandboxSubmissionInput,
+  success: SandboxSubmission,
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+});
+const WsSandboxPairDestinationRpc = Rpc.make(WS_METHODS.sandboxPairDestination, {
+  payload: SandboxSubmissionInput,
+  success: SandboxDestinationConnection,
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+});
+const WsSandboxListSubmissionsRpc = Rpc.make(WS_METHODS.sandboxListSubmissions, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(SandboxSubmission),
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+});
+const WsSandboxSubscribeSubmissionsRpc = Rpc.make(WS_METHODS.sandboxSubscribeSubmissions, {
+  payload: Schema.Struct({}),
+  success: SandboxSubmissionListEvent,
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+const WsSandboxRetrySubmissionRpc = Rpc.make(WS_METHODS.sandboxRetrySubmission, {
+  payload: SandboxSubmissionInput,
+  success: SandboxSubmission,
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+});
+const WsSandboxCancelSubmissionRpc = Rpc.make(WS_METHODS.sandboxCancelSubmission, {
+  payload: SandboxSubmissionInput,
+  success: SandboxSubmission,
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+});
+const WsSandboxDeleteSubmissionRpc = Rpc.make(WS_METHODS.sandboxDeleteSubmission, {
+  payload: SandboxSubmissionInput,
+  success: SandboxSubmission,
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+});
+const WsSandboxSubscribeSubmissionRpc = Rpc.make(WS_METHODS.sandboxSubscribeSubmission, {
+  payload: SandboxSubmissionInput,
+  success: SandboxSubmissionUpdate,
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+  stream: true,
 });
 
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
@@ -1412,6 +1525,21 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerCommitDesktopUpdateRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
+  WsSandboxGetConfigurationRpc,
+  WsSandboxSaveConfigurationRpc,
+  WsSandboxSaveProviderInstanceRpc,
+  WsSandboxRemoveConfigurationRpc,
+  WsSandboxVerifyConfigurationRpc,
+  WsSandboxLaunchOptionsRpc,
+  WsSandboxSubmitRpc,
+  WsSandboxListSubmissionsRpc,
+  WsSandboxSubscribeSubmissionsRpc,
+  WsSandboxGetSubmissionRpc,
+  WsSandboxPairDestinationRpc,
+  WsSandboxRetrySubmissionRpc,
+  WsSandboxCancelSubmissionRpc,
+  WsSandboxDeleteSubmissionRpc,
+  WsSandboxSubscribeSubmissionRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,

@@ -20,6 +20,7 @@ import {
   type AssistantCitation,
   type ApprovalRequestId,
   type ChatFileAttachment,
+  CommandId,
   DEFAULT_MODEL,
   type EnvironmentId,
   type MessageId,
@@ -228,6 +229,8 @@ import {
   foldSubagentActivities,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
+import { sandboxSubmitRejection, useSandboxSubmission } from "./useSandbox";
+import { resolveSandboxProviderEntry, useSandboxComposer } from "./chat/useSandboxComposer";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -300,6 +303,7 @@ import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
   finalizePromotedDraftThreadByRef,
+  flushComposerDraftStorage,
   markPromotedDraftThreadByRef,
   restoreFailedBackgroundDraftThread,
   useComposerDraftStore,
@@ -1565,6 +1569,11 @@ export default function ChatView(props: ChatViewProps) {
         : null,
   );
   const routeServerThreadShell = useThreadShell(routeKind === "server" ? routeThreadRef : null);
+  const sandboxSelected = routeKind === "draft" && draftThread?.sandboxTarget != null;
+  const sandboxTarget = routeKind === "draft" ? (draftThread?.sandboxTarget ?? null) : null;
+  const sandboxComposer = useSandboxComposer(sandboxTarget, routeKind === "draft");
+  const sandboxSetup = draftThread?.sandboxSetup ?? null;
+  const sandboxSubmission = useSandboxSubmission(draftId, sandboxSetup);
   const serverThread = useThread(routeThreadRef, { waitForShell: draftThread !== null });
   const loadingServerThread = useMemo(
     () =>
@@ -2475,6 +2484,15 @@ export default function ChatView(props: ChatViewProps) {
     });
     return envs;
   }, [activeProject, allProjects, projectGroupingSettings, primaryEnvironmentId, environmentById]);
+  const sandboxOptions = useMemo(
+    () =>
+      sandboxComposer.registrations.filter((registration) =>
+        logicalProjectEnvironments.some(
+          (environment) => environment.environmentId === registration.ownerEnvironmentId,
+        ),
+      ),
+    [logicalProjectEnvironments, sandboxComposer.registrations],
+  );
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
@@ -2482,7 +2500,8 @@ export default function ChatView(props: ChatViewProps) {
     ) ?? null;
   const showComposerEnvironmentIndicator = shouldShowEnvironmentIndicator({
     activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: hasMultipleEnvironments,
+    canPickEnvironment:
+      hasMultipleEnvironments || sandboxOptions.length > 0 || sandboxTarget !== null,
   });
 
   const openPullRequestDialog = useCallback(
@@ -2597,7 +2616,9 @@ export default function ChatView(props: ChatViewProps) {
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
-  const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const providerStatuses = sandboxTarget
+    ? EMPTY_PROVIDERS
+    : (serverConfig?.providers ?? EMPTY_PROVIDERS);
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
@@ -2624,13 +2645,15 @@ export default function ChatView(props: ChatViewProps) {
       ? null
       : clampFileAttachmentUploadBytes(advertisedFileAttachmentBytes);
   const envLocked = Boolean(
-    activeThread &&
-    (activeThread.messages.length > 0 ||
-      (activeThread.session !== null && activeThread.session.status !== "stopped")),
+    sandboxSetup ||
+    (activeThread &&
+      (activeThread.messages.length > 0 ||
+        (activeThread.session !== null && activeThread.session.status !== "stopped"))),
   );
 
   const loadBalancingSettings = useClientSettings();
   const automaticEnvironment = Boolean(
+    !sandboxTarget &&
     clientSettingsHydrated &&
     draftId &&
     !envLocked &&
@@ -2871,9 +2894,14 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  const sandboxProvider = resolveSandboxProviderEntry(
+    sandboxComposer.catalog,
+    selectedProviderByThreadId,
+    lockedProvider,
+  );
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
-    provider: activeProviderStatus,
+    provider: sandboxSelected ? sandboxProvider : activeProviderStatus,
     interactionMode:
       composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE,
   });
@@ -3485,7 +3513,20 @@ export default function ChatView(props: ChatViewProps) {
             });
           });
 
-    const localMessages = optimisticUserMessages;
+    const localMessages: ChatMessage[] =
+      optimisticUserMessages.length > 0 || messages.length > 0 || !sandboxSetup
+        ? optimisticUserMessages
+        : [
+            {
+              id: sandboxSetup.messageId,
+              role: "user",
+              text: sandboxSetup.prompt,
+              turnId: null,
+              createdAt: sandboxSetup.snapshot.startedAt,
+              updatedAt: sandboxSetup.snapshot.startedAt,
+              streaming: false,
+            },
+          ];
     if (localMessages.length === 0) {
       return serverMessagesWithPreviewHandoff;
     }
@@ -3500,6 +3541,7 @@ export default function ChatView(props: ChatViewProps) {
     displayServerMessages,
     optimisticUserMessages,
     projectHandoffMessagePreviews,
+    sandboxSetup,
   ]);
   const timelineProjectionRef = useRef<{
     threadKey: string | null;
@@ -3560,7 +3602,7 @@ export default function ChatView(props: ChatViewProps) {
   const liveWorktreeSetup =
     heldWorktreeSetup?.threadId === routeThreadRef.threadId ? heldWorktreeSetup : null;
   const worktreeSetup = resolveVisibleWorktreeSetup({
-    live: liveWorktreeSetup,
+    live: sandboxSetup?.snapshot ?? liveWorktreeSetup,
     recorded: recordedWorktreeSetup,
     turnStarted: activeThread?.latestTurn?.startedAt != null,
     // Counts the optimistic send too, so the row retires the moment the
@@ -3581,12 +3623,23 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const onCancelWorktreeSetup = useCallback(() => {
+    if (sandboxSetup && draftId) {
+      void sandboxSubmission.cancel();
+      return;
+    }
     if (!worktreeSetup || worktreeSetup.phase !== "running") return;
     void cancelWorktreeSetup({
       environmentId: routeThreadRef.environmentId,
       input: { threadId: worktreeSetup.threadId },
     });
-  }, [cancelWorktreeSetup, routeThreadRef.environmentId, worktreeSetup]);
+  }, [
+    cancelWorktreeSetup,
+    draftId,
+    routeThreadRef.environmentId,
+    sandboxSubmission,
+    worktreeSetup,
+    sandboxSetup,
+  ]);
   // The setup terminal belongs to the thread that was set up. A failed
   // bootstrap deletes that thread and closes its terminals, so only offer the
   // terminal while the setup thread is still the active one.
@@ -3862,6 +3915,7 @@ export default function ChatView(props: ChatViewProps) {
     );
     setDraftThreadContext(draftId, {
       environmentSelection: "auto",
+      sandboxTarget: null,
       loadBalancedEnvironmentId: null,
       branch: null,
       worktreePath: null,
@@ -3896,11 +3950,38 @@ export default function ChatView(props: ChatViewProps) {
       if (!target) return;
       setDraftThreadContext(draftId, {
         projectRef: scopeProjectRef(target.environmentId, target.projectId),
+        sandboxTarget: null,
         environmentSelection: "manual",
         loadBalancedEnvironmentId: null,
       });
     },
     [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
+  );
+
+  const onSandboxChange = useCallback(
+    (target: NonNullable<typeof sandboxTarget>) => {
+      if (envLocked || !draftId) return;
+      const source = logicalProjectEnvironments.find(
+        (environment) => environment.environmentId === target.ownerEnvironmentId,
+      );
+      if (!source) return;
+      setDraftThreadContext(draftId, {
+        projectRef: scopeProjectRef(source.environmentId, source.projectId),
+        sandboxTarget: target,
+        environmentSelection: "manual",
+        loadBalancedEnvironmentId: null,
+        worktreePath: null,
+        envMode: "local",
+      });
+      setMultipleModelSelections(null);
+    },
+    [
+      draftId,
+      envLocked,
+      logicalProjectEnvironments,
+      setDraftThreadContext,
+      setMultipleModelSelections,
+    ],
   );
 
   const activeTerminalGroup =
@@ -7357,6 +7438,7 @@ export default function ChatView(props: ChatViewProps) {
       isRevertingCheckpoint ||
       !clientSettingsHydrated ||
       threadDetailLoading ||
+      sandboxSetup?.snapshot.phase === "running" ||
       sendInFlightRef.current ||
       feedbackUploadsInFlightRef.current.has(routeThreadKey)
     ) {
@@ -7715,12 +7797,52 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
+    const sandboxLaunch =
+      sandboxSelected &&
+      draftId &&
+      sandboxTarget &&
+      activeThreadBranch &&
+      sandboxComposer.runtimeId &&
+      sandboxComposer.configurationRevision !== null
+        ? {
+            draftId,
+            sandboxTarget,
+            activeThreadBranch,
+            runtimeId: sandboxComposer.runtimeId,
+            revision: sandboxComposer.configurationRevision,
+          }
+        : null;
+    if (sandboxSelected && !sandboxLaunch) {
+      setThreadError(
+        threadIdForSend,
+        sandboxComposer.reason ?? "Select a published branch, account, and model.",
+      );
+      return;
+    }
+
     const composerImagesSnapshot = [...composerImages];
     const composerFilesSnapshot = [...composerFiles];
     const composerAttachmentsSnapshot = [...composerImagesSnapshot, ...composerFilesSnapshot];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    if (
+      sandboxSelected &&
+      (sandboxTarget?.ownerEnvironmentId !== environmentId ||
+        multipleModelSelections !== null ||
+        composerAttachmentsSnapshot.length > 0 ||
+        composerTerminalContextsSnapshot.length > 0 ||
+        composerPreviewAnnotationsSnapshot.length > 0 ||
+        composerReviewCommentsSnapshot.length > 0)
+    ) {
+      setThreadError(
+        threadIdForSend,
+        sandboxTarget?.ownerEnvironmentId !== environmentId
+          ? "The sandbox account no longer belongs to this project environment."
+          : "Sandbox launch currently supports one text prompt and one model without attachments or context.",
+      );
+      return;
+    }
     // Expired terminal excerpts are not sent; their chips leave the text with them.
     const messageTextForSend = composerTerminalContexts
       .filter((context) => !composerTerminalContextsSnapshot.includes(context))
@@ -7899,8 +8021,10 @@ export default function ChatView(props: ChatViewProps) {
       submissionIntent: resolvedSubmissionIntent,
     });
 
-    const messageIdForSend = newMessageId();
-    const messageCreatedAt = new Date().toISOString();
+    const messageIdForSend =
+      (isLocalDraftThread ? sandboxSetup?.messageId : null) ?? newMessageId();
+    const messageCreatedAt =
+      (isLocalDraftThread ? sandboxSetup?.snapshot.startedAt : null) ?? new Date().toISOString();
     const turnAttachmentsPromise = Promise.all(
       composerAttachmentsSnapshot.map(async (attachment) => {
         if (turnUsesAttachmentUploads) {
@@ -8286,6 +8410,113 @@ export default function ChatView(props: ChatViewProps) {
       ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,
       ctxSelectedModelSelection.options,
     );
+
+    if (sandboxLaunch) {
+      const { draftId, sandboxTarget, activeThreadBranch } = sandboxLaunch;
+      const existingSubmission =
+        sandboxSetup?.snapshot.phase === "cancelled" ? null : sandboxSetup?.submission;
+      const commandId = existingSubmission?.commandId ?? CommandId.make(`sandbox:${randomUUID()}`);
+      const input = existingSubmission?.input ?? {
+        commandId,
+        configurationId: sandboxTarget.configurationId,
+        expectedRevision: sandboxLaunch.revision,
+        runtimeId: sandboxLaunch.runtimeId,
+        projectId: activeProject.id,
+        branch: activeThreadBranch,
+        threadId: threadIdForSend,
+        messageId: messageIdForSend,
+        prompt: outgoingMessageText,
+        title,
+        modelSelection: threadCreateModelSelection,
+        runtimeMode,
+        interactionMode: sendInteractionMode,
+      };
+      if (!existingSubmission) {
+        const startedAt = messageCreatedAt;
+        useComposerDraftStore.getState().setDraftThreadContext(draftId, {
+          sandboxSetup: {
+            prompt: outgoingMessageText,
+            messageId: messageIdForSend,
+            submission: {
+              key: commandId,
+              sourceProjectId: activeProject.id,
+              sourceBranch: activeThreadBranch,
+              commandId,
+              intent: resolvedSubmissionIntent,
+              handoff: "provisioning",
+              ownerEnvironmentId: sandboxTarget.ownerEnvironmentId,
+              input,
+              intakeStarted: false,
+            },
+            snapshot: {
+              kind: "sandbox",
+              threadId: threadIdForSend,
+              phase: "running",
+              startedAt,
+              endedAt: null,
+              branch: activeThreadBranch,
+              baseRef: activeThreadBranch,
+              worktreePath: null,
+              setupScript: null,
+              error: null,
+              sequence: 0,
+              stages: (
+                ["source", "create", "runtime", "server", "clone", "connect", "agent"] as const
+              ).map((id) => ({
+                id,
+                status: id === "source" ? "running" : "pending",
+                startedAt: id === "source" ? startedAt : null,
+                endedAt: null,
+                percent: null,
+                detail: null,
+                tail: [],
+              })),
+            },
+          },
+        });
+        flushComposerDraftStorage();
+        promptRef.current = "";
+        clearComposerDraftContent(draftId);
+      }
+      const result = await sandboxSubmission.submit(sandboxTarget.ownerEnvironmentId, input);
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+      if (result._tag === "Success" && resolvedSubmissionIntent === "background") {
+        try {
+          await handleNewThread(
+            scopeProjectRef(activeProject.environmentId, activeProject.id),
+            resolveBackgroundDraftWorkspaceOptions({
+              envMode: sendEnvMode,
+              branch: activeThreadBranch,
+              startFromOrigin,
+            }),
+          );
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title: "Could not open a fresh composer",
+              description: error instanceof Error ? error.message : undefined,
+            }),
+          );
+        }
+      }
+      // An unconfirmed launch keeps its setup card, whose Retry reconciles the
+      // server-owned record. A refused one hands the prompt back instead.
+      const rejection = sandboxSubmitRejection(result);
+      if (rejection !== null) {
+        setOptimisticUserMessages((existing) => {
+          const removed = existing.filter((message) => message.id === messageIdForSend);
+          for (const message of removed) {
+            revokeUserMessagePreviewUrls(message);
+          }
+          const next = existing.filter((message) => message.id !== messageIdForSend);
+          return next.length === existing.length ? existing : next;
+        });
+        setThreadError(threadIdForSend, rejection);
+      }
+      return;
+    }
 
     let failure: AtomCommandResult<unknown, unknown> | null = null;
     // Auto-title from first message
@@ -9222,6 +9453,23 @@ export default function ChatView(props: ChatViewProps) {
   const onProviderModelSelect = useCallback(
     (instanceId: ProviderInstanceId, model: string, options?: { focusComposer?: boolean }) => {
       if (!activeThread) return;
+      if (sandboxTarget && draftId) {
+        if (
+          !sandboxComposer.catalog.some(
+            (entry) =>
+              entry.instanceId === instanceId &&
+              entry.models.some((candidate) => candidate.slug === model),
+          )
+        )
+          return;
+        setComposerDraftModelSelection(
+          draftId,
+          { instanceId, model },
+          { explicit: true, replaceOptions: true },
+        );
+        if (options?.focusComposer !== false) scheduleComposerFocus();
+        return;
+      }
       // Look up the configured instance so model normalization and custom
       // model lookup stay scoped to that exact instance. Unknown instance ids
       // are rejected by returning early; the server remains authoritative too.
@@ -9294,6 +9542,9 @@ export default function ChatView(props: ChatViewProps) {
       setStickyComposerModelSelection,
       providerStatuses,
       settings,
+      sandboxTarget,
+      sandboxComposer.catalog,
+      draftId,
     ],
   );
   const onEnvModeChange = useCallback(
@@ -9307,6 +9558,7 @@ export default function ChatView(props: ChatViewProps) {
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, {
           envMode: mode,
+          sandboxTarget: null,
           startFromOrigin: resolveNewDraftStartFromOrigin({
             envMode: mode,
             newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
@@ -9832,12 +10084,22 @@ export default function ChatView(props: ChatViewProps) {
                     }
                   : {})}
                 isWorking={!paintOnlyDisplayedTimeline && isWorking}
-                isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
+                isPreparingWorktree={
+                  !paintOnlyDisplayedTimeline &&
+                  (isPreparingWorktree || sandboxSetup?.snapshot.phase === "running")
+                }
                 isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
                 activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
                 worktreeSetup={paintOnlyDisplayedTimeline ? null : worktreeSetup}
-                onCancelWorktreeSetup={onCancelWorktreeSetup}
-                {...(draftId ? { onWorktreeSetupWorkLocally } : {})}
+                {...(!sandboxSetup?.submission?.intakeStarted ? { onCancelWorktreeSetup } : {})}
+                {...(sandboxSetup
+                  ? {
+                      onRetryWorktreeSetup: () => {
+                        void sandboxSubmission.retry();
+                      },
+                    }
+                  : {})}
+                {...(draftId && !sandboxSetup ? { onWorktreeSetupWorkLocally } : {})}
                 {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
@@ -9982,8 +10244,9 @@ export default function ChatView(props: ChatViewProps) {
                           <ChatComposer
                             multipleModelSelections={multipleModelSelections}
                             supportsMultipleModels={
+                              !sandboxTarget &&
                               serverConfig?.environment.capabilities.requiredWorktreeBootstrap ===
-                              true
+                                true
                             }
                             onMultipleModelSelectionsChange={setMultipleModelSelections}
                             composerRef={composerRef}
@@ -10010,15 +10273,21 @@ export default function ChatView(props: ChatViewProps) {
                             isSendBusy={isSendBusy}
                             isRevertingCheckpoint={isRevertingCheckpoint}
                             sendDisabledReason={
-                              isRevertingCheckpoint
-                                ? "Rewinding conversation"
-                                : feedbackUploading
-                                  ? "Sending feedback"
-                                  : threadDetailLoading
-                                    ? "Messages loading"
-                                    : worktreeSetupBlocksSend
-                                      ? "Preparing worktree"
-                                      : projectCloneSendBlockReason
+                              sandboxTarget
+                                ? sandboxSetup?.snapshot.phase === "running"
+                                  ? "Setting up sandbox"
+                                  : sandboxSetup?.snapshot.phase === "failed"
+                                    ? "Retry or discard the failed sandbox"
+                                    : sandboxComposer.reason
+                                : isRevertingCheckpoint
+                                  ? "Rewinding conversation"
+                                  : feedbackUploading
+                                    ? "Sending feedback"
+                                    : threadDetailLoading
+                                      ? "Messages loading"
+                                      : worktreeSetupBlocksSend
+                                        ? "Preparing worktree"
+                                        : projectCloneSendBlockReason
                             }
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}
@@ -10050,8 +10319,18 @@ export default function ChatView(props: ChatViewProps) {
                             interactionMode={interactionMode}
                             lockedProvider={lockedProvider}
                             providerStatuses={providerStatuses as ServerProvider[]}
+                            {...(sandboxTarget ? { sandboxCatalog: sandboxComposer.catalog } : {})}
+                            {...(sandboxTarget
+                              ? {
+                                  sandboxFavoriteModels: sandboxComposer.favoriteModels,
+                                  onSandboxFavoriteModelsChange:
+                                    sandboxComposer.updateFavoriteModels,
+                                }
+                              : {})}
                             providerCatalogKnown={serverConfig !== null}
-                            activeProjectDefaultModelSelection={activeProjectDefaultModelSelection}
+                            activeProjectDefaultModelSelection={
+                              sandboxTarget ? undefined : activeProjectDefaultModelSelection
+                            }
                             activeThreadModelSelection={activeThread?.modelSelection}
                             activeContextWindow={activeContextWindow}
                             compactThreadUnavailable={compactThreadUnavailable}
@@ -10145,7 +10424,14 @@ export default function ChatView(props: ChatViewProps) {
                                 {...(canCheckoutPullRequestIntoThread
                                   ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                                   : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                                {...(hasMultipleEnvironments ||
+                                sandboxOptions.length > 0 ||
+                                sandboxTarget
+                                  ? { onEnvironmentChange }
+                                  : {})}
+                                sandboxOptions={sandboxOptions}
+                                sandboxTarget={sandboxTarget}
+                                onSandboxChange={onSandboxChange}
                                 autoEnvironmentLabel={autoEnvironmentLabel}
                                 onAutoEnvironment={
                                   draftId &&

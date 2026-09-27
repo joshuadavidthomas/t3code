@@ -71,7 +71,9 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
       ? resolveDraftPromotionNavigationTarget({
           serverThreadRef,
           serverThread,
-          backgroundSubmissionPending,
+          backgroundSubmissionPending:
+            backgroundSubmissionPending ||
+            draftSession?.sandboxSetup?.submission?.intent === "background",
         })
       : null;
 

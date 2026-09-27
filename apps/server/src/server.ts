@@ -88,6 +88,10 @@ import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
+import * as SpriteActivityHold from "./sandbox/SpriteActivityHold.ts";
+import * as SandboxConfiguration from "./sandbox/SandboxConfiguration.ts";
+import * as SandboxResources from "./sandbox/SandboxResources.ts";
+import * as SandboxSubmissions from "./sandbox/SandboxSubmissions.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
@@ -173,6 +177,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import { forkParked, ServerActivation } from "./serverActivation.ts";
+import { sandboxIntakeRouteLayer } from "./sandbox/SandboxIntakeRoutes.ts";
 
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
 // 100-character default for one path segment.
@@ -273,6 +278,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ThreadPullRequestReactor.layer),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(RuntimeReceiptBusLive),
+  Layer.provideMerge(SpriteActivityHold.layer),
 );
 
 const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
@@ -502,7 +508,13 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   }),
 );
 
+const SandboxLayerLive = SandboxSubmissions.layer.pipe(
+  Layer.provideMerge(SandboxConfiguration.layer),
+  Layer.provideMerge(SandboxResources.layer),
+);
+
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+  Layer.provideMerge(SandboxLayerLive),
   Layer.provideMerge(AntigravityInstallationRefreshLive),
   Layer.provideMerge(ReplayMarkers.layer),
   Layer.provideMerge(ProviderAuthServiceLive),
@@ -602,6 +614,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     assetRouteLayer,
     attachmentUploadRouteLayer,
     deviceHubProxyRouteLayer,
+    sandboxIntakeRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),

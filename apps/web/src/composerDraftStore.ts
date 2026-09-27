@@ -21,6 +21,10 @@ import {
   type ScopedThreadRef,
   ThreadId,
   SnapShotSource,
+  WorktreeSetupSnapshot,
+  MessageId,
+  CommandId,
+  SandboxSubmitInput,
 } from "@t3tools/contracts";
 import {
   parseScopedProjectKey,
@@ -31,6 +35,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import { DeepMutable } from "effect/Types";
@@ -82,7 +87,7 @@ const isSnapShotSource = Schema.is(SnapShotSource);
 const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 9;
+const COMPOSER_DRAFT_STORAGE_VERSION = 10;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -123,6 +128,10 @@ const composerPersistStorage: PersistStorage<ComposerPersistState> = {
   setItem: (name, value) => composerDebouncedStorage.setItem(name, value),
   removeItem: (name) => composerDebouncedStorage.removeItem(name),
 };
+
+export function flushComposerDraftStorage() {
+  composerDebouncedStorage.flush();
+}
 
 // Flush pending composer draft writes before page unload to prevent data loss.
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
@@ -309,6 +318,34 @@ type LegacyPersistedComposerDraftStoreState = PersistedComposerDraftStoreState &
   LegacyStickyModelFields &
   LegacyV2StoreFields;
 
+const SandboxDraftSetup = Schema.Struct({
+  snapshot: WorktreeSetupSnapshot,
+  prompt: Schema.String,
+  messageId: MessageId,
+  submission: Schema.optionalKey(
+    Schema.Struct({
+      key: Schema.String,
+      sourceProjectId: ProjectId,
+      sourceBranch: Schema.NullOr(Schema.String),
+      commandId: CommandId,
+      intent: Schema.Literals(["foreground", "background", "alternate"]),
+      handoff: Schema.Literals(["provisioning", "ready", "dispatching", "pairing"]),
+      ownerEnvironmentId: Schema.optionalKey(EnvironmentId),
+      input: Schema.optionalKey(SandboxSubmitInput),
+      intakeStarted: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
+});
+export type SandboxDraftSetup = typeof SandboxDraftSetup.Type;
+const decodeSandboxDraftSetup = Schema.decodeUnknownOption(SandboxDraftSetup);
+
+export const SandboxTarget = Schema.Struct({
+  ownerEnvironmentId: EnvironmentId,
+  configurationId: Schema.String,
+});
+export type SandboxTarget = typeof SandboxTarget.Type;
+const decodeSandboxTarget = Schema.decodeUnknownOption(SandboxTarget);
+
 const PersistedDraftThreadState = Schema.Struct({
   threadId: ThreadId,
   environmentId: Schema.String,
@@ -322,6 +359,8 @@ const PersistedDraftThreadState = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
+  sandboxTarget: Schema.optionalKey(Schema.NullOr(SandboxTarget)),
+  sandboxSetup: Schema.optionalKey(Schema.NullOr(SandboxDraftSetup)),
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
@@ -449,6 +488,9 @@ export interface DraftSessionState {
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
+  /** A sandbox draft is exactly one with a named target. */
+  sandboxTarget?: SandboxTarget | null;
+  sandboxSetup?: SandboxDraftSetup | null;
   startFromOrigin: boolean;
   promotedTo?: ScopedThreadRef | null;
 }
@@ -552,6 +594,8 @@ interface ComposerDraftStoreState {
       projectRef?: ScopedProjectRef;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      sandboxTarget?: SandboxTarget | null;
+      sandboxSetup?: SandboxDraftSetup | null;
       startFromOrigin?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
@@ -776,7 +820,7 @@ const EMPTY_COMPOSER_DRAFT_MODEL_STATE = Object.freeze<ComposerDraftModelState>(
   modelSelectionByProvider: EMPTY_MODEL_SELECTION_BY_PROVIDER,
 });
 
-const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
+export const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   prompt: "",
   images: EMPTY_IMAGES,
   files: EMPTY_FILES,
@@ -1536,6 +1580,10 @@ function createDraftThreadState(
       : options.startFromOrigin;
   const environmentSelection =
     options?.environmentSelection ?? existingThread?.environmentSelection;
+  const sandboxTarget =
+    existingThread?.sandboxTarget?.ownerEnvironmentId === projectRef.environmentId
+      ? existingThread.sandboxTarget
+      : null;
   return {
     threadId,
     environmentId: projectRef.environmentId,
@@ -1559,6 +1607,8 @@ function createDraftThreadState(
     worktreePath: nextWorktreePath,
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
+    sandboxTarget,
+    sandboxSetup: existingThread?.sandboxSetup ?? null,
     startFromOrigin: nextStartFromOrigin,
     promotedTo: null,
   };
@@ -1593,6 +1643,9 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
+    left.sandboxTarget?.ownerEnvironmentId === right.sandboxTarget?.ownerEnvironmentId &&
+    left.sandboxTarget?.configurationId === right.sandboxTarget?.configurationId &&
+    left.sandboxSetup === right.sandboxSetup &&
     left.startFromOrigin === right.startFromOrigin &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
@@ -1741,6 +1794,12 @@ function normalizePersistedDraftThreads(
         branch: typeof branch === "string" ? branch : null,
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
+        sandboxTarget: decodeSandboxTarget(candidateDraftThread.sandboxTarget).pipe(
+          Option.getOrNull,
+        ),
+        sandboxSetup: decodeSandboxDraftSetup(candidateDraftThread.sandboxSetup).pipe(
+          Option.getOrNull,
+        ),
         startFromOrigin,
         ...(candidateDraftThread.environmentSelection === "manual" ||
         candidateDraftThread.environmentSelection === "auto"
@@ -2105,6 +2164,7 @@ export function partializeComposerDraftStoreState(
         ([threadKey, draftThread]) =>
           mappedDraftKeys.has(threadKey) ||
           isDraftThreadPromoting(draftThread) ||
+          draftThread.sandboxSetup != null ||
           composerDraftHasUserContent(state.draftsByThreadKey[threadKey]),
       )
       .map(([threadKey]) => threadKey),
@@ -2199,14 +2259,26 @@ export function partializeComposerDraftStoreState(
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
-  const persistedDraftThreadsByThreadKey: DeepMutable<
-    PersistedComposerDraftStoreState["draftThreadsByThreadKey"]
-  > = {};
+  const persistedDraftThreadsByThreadKey: Record<string, PersistedDraftThreadState> = {};
   for (const [threadKey, draftThread] of Object.entries(state.draftThreadsByThreadKey)) {
     if (!keptSessionKeys.has(threadKey)) {
       continue;
     }
-    persistedDraftThreadsByThreadKey[threadKey] = draftThread;
+    persistedDraftThreadsByThreadKey[threadKey] = {
+      ...draftThread,
+      sandboxSetup: draftThread.sandboxSetup
+        ? {
+            ...draftThread.sandboxSetup,
+            snapshot: {
+              ...draftThread.sandboxSetup.snapshot,
+              stages: draftThread.sandboxSetup.snapshot.stages.map((stage) => ({
+                ...stage,
+                tail: [...stage.tail],
+              })),
+            },
+          }
+        : null,
+    };
   }
   return {
     draftsByThreadKey: persistedDraftsByThreadKey,
@@ -2486,6 +2558,8 @@ function toHydratedDraftThreadState(
     branch: persistedDraftThread.branch,
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
+    sandboxTarget: persistedDraftThread.sandboxTarget ?? null,
+    sandboxSetup: persistedDraftThread.sandboxSetup ?? null,
     startFromOrigin: persistedDraftThread.startFromOrigin,
     ...(persistedDraftThread.environmentSelection
       ? { environmentSelection: persistedDraftThread.environmentSelection }
@@ -2694,6 +2768,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 previousThreadKeyForLogicalProject,
               ) &&
               !isDraftThreadPromoting(previousDraftThread) &&
+              !previousDraftThread?.sandboxSetup &&
               !composerDraftHasUserContent(
                 state.draftsByThreadKey[previousThreadKeyForLogicalProject],
               )
@@ -2767,6 +2842,17 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               (options.branch != null || options.worktreePath != null
                 ? "manual"
                 : existing.environmentSelection);
+            const ordinaryTargetSelected = options.worktreePath != null;
+            const requestedSandboxTarget =
+              options.sandboxTarget === undefined
+                ? ordinaryTargetSelected
+                  ? null
+                  : (existing.sandboxTarget ?? null)
+                : options.sandboxTarget;
+            const nextSandboxTarget =
+              requestedSandboxTarget?.ownerEnvironmentId === nextProjectRef.environmentId
+                ? requestedSandboxTarget
+                : null;
             const nextDraftThread: DraftThreadState = {
               threadId: existing.threadId,
               environmentId: nextProjectRef.environmentId,
@@ -2789,6 +2875,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               worktreePath: nextWorktreePath,
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
+              sandboxTarget: nextSandboxTarget,
+              sandboxSetup:
+                options.sandboxSetup === undefined
+                  ? projectChanged || !nextSandboxTarget || options.worktreePath != null
+                    ? null
+                    : (existing.sandboxSetup ?? null)
+                  : options.sandboxSetup,
               startFromOrigin: nextStartFromOrigin,
               promotedTo: existing.promotedTo ?? null,
             };
@@ -2804,6 +2897,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.branch === existing.branch &&
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
+              nextDraftThread.sandboxTarget?.ownerEnvironmentId ===
+                existing.sandboxTarget?.ownerEnvironmentId &&
+              nextDraftThread.sandboxTarget?.configurationId ===
+                existing.sandboxTarget?.configurationId &&
+              nextDraftThread.sandboxSetup === existing.sandboxSetup &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
@@ -4282,6 +4380,22 @@ export function restoreFailedBackgroundDraftThread(
       },
     },
   }));
+}
+
+export function recoverCancelledSandboxDraft(draftId: DraftId, threadId: ThreadId): void {
+  useComposerDraftStore.setState((state) => {
+    const draft = state.draftThreadsByThreadKey[draftId];
+    if (!draft) return state;
+    return {
+      draftThreadsByThreadKey: {
+        ...state.draftThreadsByThreadKey,
+        [draftId]: { ...draft, threadId, promotedTo: null },
+      },
+      // Do not reclaim the logical-project slot: a background send may have
+      // already opened a newer composer there. An existing mapping to this
+      // draft remains intact because this mutation does not touch the map.
+    };
+  });
 }
 
 export function finalizePromotedDraftThreadByRef(threadRef: ScopedThreadRef): void {

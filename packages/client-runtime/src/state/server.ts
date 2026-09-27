@@ -1,4 +1,5 @@
 import {
+  type CommandId,
   type EnvironmentId,
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -6,6 +7,8 @@ import {
   type ServerLifecycleStreamReadyEvent,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
+  type SandboxSubmission,
+  type SandboxSubmissionListEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -21,7 +24,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -29,6 +32,7 @@ import {
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
@@ -87,6 +91,33 @@ const serverUpdateStateAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.withLabel(`environment-data:server:update-state:${environmentId}`),
   ),
 );
+
+export function applySandboxSubmissionListEvent(
+  current: ReadonlyArray<SandboxSubmission>,
+  event: SandboxSubmissionListEvent,
+): ReadonlyArray<SandboxSubmission> {
+  switch (event.type) {
+    case "snapshot":
+      return event.submissions;
+    case "added":
+      return [
+        ...current.filter((value) => value.input.commandId !== event.submission.input.commandId),
+        event.submission,
+      ];
+    case "updated":
+      return current.map((value) =>
+        value.input.commandId === event.update.commandId
+          ? {
+              ...value,
+              ...event.update,
+              input: value.input,
+            }
+          : value,
+      );
+    case "removed":
+      return current.filter((value) => value.input.commandId !== event.commandId);
+  }
+}
 
 export class ServerUpdateResumeTimeoutError extends Schema.TaggedError<ServerUpdateResumeTimeoutError>()(
   "ServerUpdateResumeTimeoutError",
@@ -968,6 +999,51 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
   }) => welcomeFamily(target.environmentId);
 
+  const sandboxConfiguration = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:server:sandbox-configuration",
+    tag: WS_METHODS.sandboxGetConfiguration,
+  });
+  const refreshSandboxConfiguration = (
+    { environmentId }: { readonly environmentId: EnvironmentId },
+    registry: AtomRegistry.AtomRegistry,
+  ) => Effect.sync(() => registry.refresh(sandboxConfiguration({ environmentId, input: {} })));
+  const sandboxSubmissions = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:server:sandbox-submissions",
+    subscribe: (_input: Record<string, never>) =>
+      subscribe(WS_METHODS.sandboxSubscribeSubmissions, {}).pipe(
+        Stream.mapAccum(
+          () => [] as ReadonlyArray<SandboxSubmission>,
+          (current, event) => {
+            const submissions = applySandboxSubmissionListEvent(current, event);
+            return [submissions, [submissions]];
+          },
+        ),
+      ),
+  });
+  const sandboxSubmission = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:server:sandbox-submission",
+    tag: WS_METHODS.sandboxSubscribeSubmission,
+    idleTtlMs: 0,
+  });
+  const getSandboxSubmission = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:server:get-sandbox-submission",
+    tag: WS_METHODS.sandboxGetSubmission,
+  });
+  const refreshSandboxSubmissions = (
+    {
+      environmentId,
+      input,
+    }: { readonly environmentId: EnvironmentId; readonly input: { readonly commandId: CommandId } },
+    registry: AtomRegistry.AtomRegistry,
+  ) =>
+    Effect.sync(() => {
+      registry.refresh(sandboxSubmissions({ environmentId, input: {} }));
+      const target = { environmentId, input: { commandId: input.commandId } };
+      registry.refresh(getSandboxSubmission(target));
+      // A draft can subscribe before submit has persisted its command ID.
+      registry.refresh(sandboxSubmission(target));
+    });
+
   return {
     configValueAtom,
     updateStateAtom,
@@ -1103,6 +1179,58 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverRemoveKeybinding,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    sandboxConfiguration,
+    sandboxLaunchOptions: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:sandbox-launch-options",
+      tag: WS_METHODS.sandboxLaunchOptions,
+    }),
+    sandboxSubmission,
+    getSandboxSubmission,
+    pairSandboxDestination: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:pair-sandbox-destination",
+      tag: WS_METHODS.sandboxPairDestination,
+    }),
+    sandboxSubmissions,
+    submitSandbox: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:submit-sandbox",
+      tag: WS_METHODS.sandboxSubmit,
+      onSettled: refreshSandboxSubmissions,
+    }),
+    retrySandboxSubmission: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:retry-sandbox-submission",
+      tag: WS_METHODS.sandboxRetrySubmission,
+      onSettled: refreshSandboxSubmissions,
+    }),
+    cancelSandboxSubmission: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:cancel-sandbox-submission",
+      tag: WS_METHODS.sandboxCancelSubmission,
+      onSettled: refreshSandboxSubmissions,
+    }),
+    deleteSandboxSubmission: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:delete-sandbox-submission",
+      tag: WS_METHODS.sandboxDeleteSubmission,
+      onSettled: refreshSandboxSubmissions,
+    }),
+    saveSandboxConfiguration: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:save-sandbox-configuration",
+      tag: WS_METHODS.sandboxSaveConfiguration,
+      onSettled: refreshSandboxConfiguration,
+    }),
+    saveSandboxProviderInstance: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:save-sandbox-provider-instance",
+      tag: WS_METHODS.sandboxSaveProviderInstance,
+      onSettled: refreshSandboxConfiguration,
+    }),
+    removeSandboxConfiguration: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:remove-sandbox-configuration",
+      tag: WS_METHODS.sandboxRemoveConfiguration,
+      onSettled: refreshSandboxConfiguration,
+    }),
+    verifySandboxConfiguration: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:verify-sandbox-configuration",
+      tag: WS_METHODS.sandboxVerifyConfiguration,
+      onSettled: refreshSandboxConfiguration,
     }),
     updateSettings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-settings",

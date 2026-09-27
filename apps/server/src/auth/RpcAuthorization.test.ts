@@ -1,4 +1,5 @@
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -19,6 +20,28 @@ describe("RPC authorization scopes", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
 
+  it("allows reading sandbox configuration without granting credential writes or verification", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.sandboxGetConfiguration)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.sandboxSaveConfiguration)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.sandboxSaveProviderInstance)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.sandboxRemoveConfiguration)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.sandboxVerifyConfiguration)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
+  it("requires access management to mint sandbox destination pairing credentials", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.sandboxPairDestination)).toBe(AuthAccessWriteScope);
+  });
+
   it("authorizes background policy reporting and observation deliberately", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverReportClientActivity)).toBe(
       AuthOrchestrationReadScope,
@@ -32,6 +55,23 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.subscribeBackgroundPolicy)).toBe(
       AuthOrchestrationReadScope,
     );
+  });
+
+  it("separates sandbox submission observation from creation, retry and cancellation", () => {
+    for (const method of [
+      WS_METHODS.sandboxLaunchOptions,
+      WS_METHODS.sandboxListSubmissions,
+      WS_METHODS.sandboxSubscribeSubmissions,
+      WS_METHODS.sandboxGetSubmission,
+      WS_METHODS.sandboxSubscribeSubmission,
+    ])
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    for (const method of [
+      WS_METHODS.sandboxSubmit,
+      WS_METHODS.sandboxRetrySubmission,
+      WS_METHODS.sandboxCancelSubmission,
+    ])
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
   });
 
   it("allows relay status reads without granting relay installation access", () => {

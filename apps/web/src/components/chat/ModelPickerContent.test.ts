@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
+import type { DeclaredProviderInstanceEntry } from "../../providerInstances";
 import {
   adjacentModelPickerProvider,
   resolveModelPickerSelectedModel,
@@ -33,6 +34,30 @@ function entry(status: ServerProvider["status"], driver = "opencode") {
 }
 
 describe("shouldIncludeModelPickerOption", () => {
+  it("selects only models declared by a runtime catalog without host readiness", () => {
+    const runtimeEntry: DeclaredProviderInstanceEntry = {
+      source: "runtime",
+      instanceId: ProviderInstanceId.make("sandbox_codex"),
+      driverKind: ProviderDriverKind.make("codex"),
+      displayName: "Sandbox Codex",
+      isDefault: true,
+      showInteractionModeToggle: false,
+      models: [
+        { slug: "account-model", name: "Account model", isCustom: false, capabilities: null },
+      ],
+    };
+
+    expect(
+      shouldIncludeModelPickerOption({
+        entry: runtimeEntry,
+        option: runtimeEntry.models[0]!,
+        activeInstanceId: runtimeEntry.instanceId,
+        activeModel: "account-model",
+      }),
+    ).toBe(true);
+    expect(shouldOfferModelPickerSetup(runtimeEntry, runtimeEntry.models)).toBe(false);
+  });
+
   it.each(["ready", "error"] as const)(
     "never offers the internal Antigravity default marker as a model when %s",
     (status) => {

@@ -76,6 +76,11 @@ const baseUrlFlag = Flag.String("base-url").pipe(
   Flag.optional,
 );
 
+const replaceActiveFlag = Flag.Boolean("replace-active").pipe(
+  Flag.withDescription("Revoke this subject's other active bearer sessions."),
+  Flag.withDefault(false),
+);
+
 const tokenOnlyFlag = Flag.Boolean("token-only").pipe(
   Flag.withDescription("Print only the issued bearer token."),
   Flag.withDefault(false),
@@ -164,6 +169,7 @@ const sessionIssueCommand = Command.make("issue", {
   ttl: ttlFlag,
   label: labelFlag,
   subject: subjectFlag,
+  replaceActive: replaceActiveFlag,
   tokenOnly: tokenOnlyFlag,
   json: jsonFlag,
 }).pipe(
@@ -178,6 +184,7 @@ const sessionIssueCommand = Command.make("issue", {
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
             ...(Option.isSome(flags.subject) ? { subject: flags.subject.value } : {}),
+            ...(flags.replaceActive ? { replaceActive: true } : {}),
           });
           yield* Console.log(
             formatIssuedSession(issued, {

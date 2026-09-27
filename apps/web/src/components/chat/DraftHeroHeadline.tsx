@@ -44,6 +44,9 @@ export function DraftHeroHeadline({
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
+  const sandboxTarget = useComposerDraftStore((store) =>
+    draftId ? store.getDraftSession(draftId)?.sandboxTarget : null,
+  );
   const threads = useThreadShells();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -174,7 +177,7 @@ export function DraftHeroHeadline({
               scopeProjectRef(project.environmentId, project.id),
               draftId,
             );
-            if (!hasExplicitComposerModelSelection(currentDraft)) {
+            if (!sandboxTarget && !hasExplicitComposerModelSelection(currentDraft)) {
               applyStickyState(draftId);
               const environmentSettings = environments.find(
                 (environment) => environment.environmentId === project.environmentId,
