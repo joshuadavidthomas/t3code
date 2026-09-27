@@ -74,7 +74,7 @@ export const makeSpritesProvisioner = Effect.fnUntraced(function* (
       );
       if (!selectedClaude || selectedArtifact.runtime.providers.length !== 1)
         return yield* failure("Sandbox artifact provider is unavailable or unsupported.");
-      const resource = yield* resources.getOrCreate(submission);
+      const resource = yield* resources.getOrCreate(submission, secrets.namePrefix);
       const sprites = yield* client(secrets.credential);
       if (stage === "create") {
         const existing = yield* sprites.find(resource.name);

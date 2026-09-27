@@ -93,6 +93,31 @@ it.layer(NodeServices.layer)("sandbox configuration", (it) => {
     }).pipe(Effect.provide(dependencies)),
   );
 
+  it.effect("keeps a validated Sprite name prefix until it is changed", () =>
+    Effect.gen(function* () {
+      const { service } = yield* fixture;
+      const saved = yield* service.save({ ...create("Work", "work-token"), namePrefix: "orb-" });
+      expect(saved.namePrefix).toBe("orb-");
+      const renamed = yield* service.save({
+        id: saved.id,
+        provider: "sprites",
+        name: "Work renamed",
+        expectedRevision: saved.revision,
+      });
+      expect(renamed.namePrefix).toBe("orb-");
+      const invalid = yield* service
+        .save({
+          id: saved.id,
+          provider: "sprites",
+          name: "Work",
+          namePrefix: "Orb_",
+          expectedRevision: renamed.revision,
+        })
+        .pipe(Effect.flip);
+      expect(invalid.code).toBe("invalid");
+    }).pipe(Effect.provide(dependencies)),
+  );
+
   it.effect("scopes provider settings and redacts sensitive environment values", () =>
     Effect.gen(function* () {
       const { service } = yield* fixture;

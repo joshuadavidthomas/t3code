@@ -266,6 +266,7 @@ it.effect(
             }
             return yield* baseProvisioner.intake(value, {
               credential: "captured",
+              namePrefix: "",
               providerInstances: {},
             });
           }),

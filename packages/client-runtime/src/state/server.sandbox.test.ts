@@ -42,6 +42,7 @@ const configuration: SandboxConfiguration = {
   name: "Personal",
   revision: 1,
   credentialConfigured: true,
+  namePrefix: "",
   verifiedAt: null,
   providerInstances: {},
   providerModelPreferences: {},

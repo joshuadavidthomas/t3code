@@ -20,12 +20,15 @@ export const SandboxProviderModelPreferencesMap = Schema.Record(
   ProviderInstanceId,
   SandboxProviderModelPreferences,
 );
+/** Sprites tokens can be limited to names with a prefix; sandbox names start with it. */
+export const SandboxNamePrefix = Schema.String.check(Schema.isPattern(/^[a-z0-9-]{0,20}$/));
 export const SandboxConfiguration = Schema.Struct({
   id: Schema.String.check(Schema.isUUID(4)),
   provider: Schema.Literal("sprites"),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
   revision: Revision,
   credentialConfigured: Schema.Boolean,
+  namePrefix: SandboxNamePrefix.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   verifiedAt: Schema.NullOr(Text),
   providerInstances: ProviderInstanceConfigMap.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   providerModelPreferences: SandboxProviderModelPreferencesMap.pipe(
@@ -38,6 +41,8 @@ export const SandboxConfigurationSaveInput = Schema.Struct({
   provider: Schema.Literal("sprites"),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
   expectedRevision: Revision,
+  // Omitted preserves the saved prefix.
+  namePrefix: Schema.optionalKey(SandboxNamePrefix),
   // Omitted preserves the credential; null clears it; a string replaces it.
   credential: Schema.optionalKey(
     Schema.NullOr(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096))),

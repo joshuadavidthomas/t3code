@@ -7,7 +7,8 @@ machine. That machine must stay running and reachable while you work.
 
 On web and desktop, open **Settings → Connections → Add environment → Sandbox**,
 choose **Sprites**, and give the account a name and API token. You can add separate
-personal and work accounts. In **Settings → Providers**, select that account in
+personal and work accounts. If the token only allows Sprite names with a prefix,
+enter that prefix too. In **Settings → Providers**, select that account in
 the environment menu and configure Claude.
 
 Start a new thread, choose the account from **Run on**, then choose your project,

@@ -36,6 +36,7 @@ import { validateSandboxSelection } from "./SandboxRuntime.ts";
 
 const CapturedSecrets = Schema.Struct({
   credential: Schema.String,
+  namePrefix: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   providerInstances: ProviderInstanceConfigMap,
 });
 export type SandboxCapturedSecrets = typeof CapturedSecrets.Type;
@@ -460,6 +461,7 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
         const key = `sandbox-submission-${NodeCrypto.createHash("sha256").update(decoded.commandId).digest("hex")}-${NodeCrypto.randomUUID()}`;
         const privateBody = yield* encodeSecrets({
           credential: capture.credential,
+          namePrefix: capture.configuration.namePrefix,
           providerInstances: capture.providerInstances,
         }).pipe(Effect.mapError(storageFailure));
         const body = yield* encode(value).pipe(Effect.mapError(storageFailure));

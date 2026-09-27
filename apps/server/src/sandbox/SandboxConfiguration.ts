@@ -104,10 +104,11 @@ export const makeSandboxConfiguration = Effect.fnUntraced(function* (
         const key = secretKey(id);
         const previous = yield* secrets.get(key).pipe(Effect.mapError(storageFailure));
         const next: SandboxConfiguration = {
-          ...(current ?? { providerInstances: {}, providerModelPreferences: {} }),
+          ...(current ?? { providerInstances: {}, providerModelPreferences: {}, namePrefix: "" }),
           id,
           provider: decoded.provider,
           name: decoded.name,
+          ...(decoded.namePrefix !== undefined ? { namePrefix: decoded.namePrefix } : {}),
           revision: decoded.expectedRevision + 1,
           credentialConfigured:
             decoded.credential === undefined

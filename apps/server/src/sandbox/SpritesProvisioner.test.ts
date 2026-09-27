@@ -67,7 +67,7 @@ const submission: SandboxSubmissionRecord = {
     stages: [],
   },
 };
-const captured = { credential: "captured-account-key", providerInstances: {} };
+const captured = { credential: "captured-account-key", namePrefix: "", providerInstances: {} };
 const destination = {
   environmentId: EnvironmentId.make("remote"),
   projectId: ProjectId.make("remote-project"),
@@ -80,44 +80,48 @@ const dependencies = SandboxResources.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
-it.effect("reconciles a lost create response with the persisted name after reopening", () =>
-  Effect.gen(function* () {
-    let creates = 0;
-    let name: string | undefined;
-    const client: SpritesClient = {
-      find: (requested) =>
-        Effect.sync(() =>
-          requested === name ? { id: "sprite", url: "https://sprite.example" } : null,
-        ),
-      create: (requested) =>
-        Effect.gen(function* () {
-          name = requested;
-          creates++;
-          return yield* new SandboxSubmissionError({
-            code: "unavailable",
-            message: "Response lost",
-          });
-        }),
-      remove: () => Effect.void,
-      makeUrlPublic: () => Effect.void,
-      exec: () => Effect.succeed(""),
-      upload: () => Effect.void,
-      putService: () => Effect.void,
-    };
-    const open = () =>
-      makeSpritesProvisioner(
-        { runtime, archivePath: "/unused" },
-        () => Effect.succeed(submission.source),
-        () => Effect.succeed(client),
-      );
-    const first = yield* open();
-    yield* first.stage("create", submission, captured).pipe(Effect.flip);
-    const resumed = yield* open();
-    yield* resumed.stage("create", submission, captured);
-    expect(creates).toBe(1);
-    const resources = yield* SandboxResources.SandboxResources;
-    expect((yield* resources.get(submission.input.commandId)).sprite?.id).toBe("sprite");
-  }).pipe(Effect.scoped, Effect.provide(dependencies)),
+it.effect(
+  "reconciles a lost create response with the persisted prefixed name after reopening",
+  () =>
+    Effect.gen(function* () {
+      let creates = 0;
+      let name: string | undefined;
+      const client: SpritesClient = {
+        find: (requested) =>
+          Effect.sync(() =>
+            requested === name ? { id: "sprite", url: "https://sprite.example" } : null,
+          ),
+        create: (requested) =>
+          Effect.gen(function* () {
+            name = requested;
+            creates++;
+            return yield* new SandboxSubmissionError({
+              code: "unavailable",
+              message: "Response lost",
+            });
+          }),
+        remove: () => Effect.void,
+        makeUrlPublic: () => Effect.void,
+        exec: () => Effect.succeed(""),
+        upload: () => Effect.void,
+        putService: () => Effect.void,
+      };
+      const open = () =>
+        makeSpritesProvisioner(
+          { runtime, archivePath: "/unused" },
+          () => Effect.succeed(submission.source),
+          () => Effect.succeed(client),
+        );
+      const prefixed = { ...captured, namePrefix: "orb-" };
+      const first = yield* open();
+      yield* first.stage("create", submission, prefixed).pipe(Effect.flip);
+      expect(name).toMatch(/^orb-t3-[a-f0-9]{32}$/);
+      const resumed = yield* open();
+      yield* resumed.stage("create", submission, prefixed);
+      expect(creates).toBe(1);
+      const resources = yield* SandboxResources.SandboxResources;
+      expect((yield* resources.get(submission.input.commandId)).sprite?.id).toBe("sprite");
+    }).pipe(Effect.scoped, Effect.provide(dependencies)),
 );
 
 it.effect(

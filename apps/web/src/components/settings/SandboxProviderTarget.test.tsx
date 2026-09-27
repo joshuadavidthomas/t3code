@@ -94,6 +94,7 @@ function configuration(
     name: "Personal",
     revision,
     credentialConfigured: true,
+    namePrefix: "",
     verifiedAt: null,
     providerInstances,
     providerModelPreferences: {},

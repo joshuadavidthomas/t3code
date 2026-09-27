@@ -89,6 +89,7 @@ const configuration = (
   name,
   revision,
   credentialConfigured: true,
+  namePrefix: "",
   verifiedAt: null,
   providerInstances: {
     [ProviderInstanceId.make("codex")]: { driver: ProviderDriverKind.make("codex") },

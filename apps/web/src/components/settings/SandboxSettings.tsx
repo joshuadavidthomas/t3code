@@ -197,6 +197,7 @@ function SpritesConfigurationForm({
   });
   const [current, setCurrent] = useState(configuration);
   const [name, setName] = useState(configuration?.name ?? "");
+  const [namePrefix, setNamePrefix] = useState(configuration?.namePrefix ?? "");
   const [credential, setCredential] = useState("");
   const [clearCredential, setClearCredential] = useState(false);
   const [pending, setPending] = useState(false);
@@ -209,6 +210,7 @@ function SpritesConfigurationForm({
       input: {
         provider: "sprites",
         name: name.trim(),
+        namePrefix: namePrefix.trim(),
         expectedRevision: current?.revision ?? 0,
         ...(current ? { id: current.id } : {}),
         ...(clearCredential
@@ -271,6 +273,18 @@ function SpritesConfigurationForm({
             }
             aria-label="Sprites API token"
             onChange={(event) => setCredential(event.target.value)}
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium text-foreground">
+            Sprite name prefix
+          </span>
+          <Input
+            value={namePrefix}
+            disabled={pending}
+            placeholder="Optional, e.g. orb-"
+            aria-label="Sprite name prefix"
+            onChange={(event) => setNamePrefix(event.target.value.toLowerCase())}
           />
         </label>
         {current?.credentialConfigured ? (

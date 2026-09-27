@@ -84,7 +84,10 @@ export const makeSandboxResources = Effect.fnUntraced(function* () {
     const row = yield* findRow(commandId);
     return row ? yield* toResource(row) : null;
   });
-  const getOrCreate = Effect.fnUntraced(function* (submission: SandboxSubmissionRecord) {
+  const getOrCreate = Effect.fnUntraced(function* (
+    submission: SandboxSubmissionRecord,
+    namePrefix = "",
+  ) {
     const accepted = yield* decodeSubmission(submission).pipe(
       Effect.mapError(() => failure("invalid", "Invalid sandbox submission.")),
     );
@@ -98,7 +101,7 @@ export const makeSandboxResources = Effect.fnUntraced(function* () {
             return yield* failure("conflict", "Sandbox runtime identity does not match.");
           return yield* toResource(existing);
         }
-        const name = `t3-${NodeCrypto.randomUUID().replaceAll("-", "")}`;
+        const name = `${namePrefix}t3-${NodeCrypto.randomUUID().replaceAll("-", "")}`;
         yield* sql`INSERT INTO sandbox_resources
           (command_id, name, artifact_integrity)
           VALUES (${accepted.input.commandId}, ${name}, ${accepted.runtime.artifactIntegrity})`.pipe(
