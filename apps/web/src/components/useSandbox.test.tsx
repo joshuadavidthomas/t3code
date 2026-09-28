@@ -17,6 +17,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 const state = vi.hoisted(() => ({
   update: null as SandboxSubmissionUpdate | null,
   stored: null as SandboxSubmissionUpdate | null,
+  storedError: null as Error | null,
   shell: null as object | null,
   detail: null as object | null,
   commands: new Map<string, ReturnType<typeof vi.fn>>(),
@@ -42,7 +43,7 @@ vi.mock("../state/use-atom-command", () => ({
 vi.mock("../state/query", () => ({
   useEnvironmentQuery: (atom: string | null) => ({
     data: atom === "subscription" ? state.update : atom === "stored" ? state.stored : null,
-    error: null,
+    error: atom === "stored" ? state.storedError : null,
     isPending: false,
     isSuccess: true,
     refresh: state.refresh,
@@ -127,6 +128,7 @@ function current() {
 beforeEach(() => {
   state.update = null;
   state.stored = null;
+  state.storedError = null;
   state.shell = null;
   state.detail = null;
   state.commands.clear();
@@ -403,6 +405,34 @@ it.each(["cancelled", "deleted"] as const)(
     }
   },
 );
+
+it("waits for its own submit before treating a missing submission as lost", async () => {
+  const mounted = await mountSubmission();
+  try {
+    const input = { commandId: current().submission!.commandId } as never;
+    let accept!: (result: unknown) => void;
+    state.commands.get("submit")!.mockReturnValueOnce(new Promise((resolve) => (accept = resolve)));
+    let submitted!: Promise<unknown>;
+    await act(async () => {
+      submitted = mounted.actions().submit(EnvironmentId.make("owner"), input);
+    });
+    // The host hasn't stored the command yet, so asking for it fails.
+    state.storedError = new Error("Sandbox submission does not exist.");
+    await mounted.update();
+    expect(current().snapshot.phase).toBe("running");
+    await act(async () => {
+      accept({ _tag: "Success", value: { ...completed(), progress: setup().snapshot } });
+      await submitted;
+    });
+    expect(current().snapshot.phase).toBe("running");
+    // Without a submit in flight, as after a reload, the same absence is a lost launch.
+    state.storedError = new Error("Sandbox submission does not exist.");
+    await mounted.update();
+    expect(current().snapshot.phase).toBe("failed");
+  } finally {
+    await mounted.close();
+  }
+});
 
 it("hands a refused launch back with the server's reason and keeps an unconfirmed one for retry", async () => {
   const mounted = await mountSubmission();

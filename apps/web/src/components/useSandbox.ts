@@ -79,6 +79,10 @@ export function sandboxSubmitRejection(result: AtomCommandResult<unknown, unknow
   return failure instanceof Error ? failure.message : "Failed to send message.";
 }
 
+// Launches this client is still submitting. Until submit returns, the host may
+// not have stored the command, so its absence is not yet a lost launch.
+const submitting = new Set<CommandId>();
+
 export function useSandboxSubmission(draftId: DraftId | null, setup: SandboxDraftSetup | null) {
   const ownerEnvironmentId = setup?.submission?.ownerEnvironmentId ?? null;
   const commandId = setup?.submission?.commandId ?? null;
@@ -99,7 +103,10 @@ export function useSandboxSubmission(draftId: DraftId | null, setup: SandboxDraf
     owner: NonNullable<typeof ownerEnvironmentId>,
     input: SandboxSubmitInput,
   ) => {
-    const result = await submitCommand({ environmentId: owner, input });
+    submitting.add(input.commandId);
+    const result = await submitCommand({ environmentId: owner, input }).finally(() =>
+      submitting.delete(input.commandId),
+    );
     if (result._tag === "Success" && draftId) applySubmission(draftId, result.value);
     if (result._tag === "Failure" && draftId) {
       if (sandboxSubmitRejection(result) !== null) {
@@ -279,12 +286,21 @@ function SandboxSubmissionObserver({
   useEffect(() => {
     if (
       persisted.error &&
+      commandId &&
+      !submitting.has(commandId) &&
       !persisted.data &&
       !subscription.data &&
       setup.snapshot.phase === "running"
     )
       settleSandboxSetup(draftId, "failed", "Could not confirm sandbox setup. Retry to reconnect.");
-  }, [draftId, persisted.error, persisted.data, subscription.data, setup.snapshot.phase]);
+  }, [
+    commandId,
+    draftId,
+    persisted.error,
+    persisted.data,
+    subscription.data,
+    setup.snapshot.phase,
+  ]);
 
   useEffect(() => {
     if (setup.submission?.handoff === "pairing" && setup.snapshot.phase === "failed") {
