@@ -1,0 +1,9 @@
+services:
+  t3-app:
+    command: node .agents/start-t3.ts
+    port: 5733
+    health: /.well-known/t3/environment
+    portal:
+      url: /
+      title: T3 Code
+      description: Opens T3 using your Amp thread access; no separate pairing required.
