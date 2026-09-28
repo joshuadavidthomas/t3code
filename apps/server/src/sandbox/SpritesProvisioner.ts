@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { loadSandboxArtifact } from "./SandboxArtifact.ts";
+import { SANDBOX_WORKSPACE_ROOT } from "./SandboxDeployment.ts";
 import { SandboxIntakeRequest } from "./SandboxIntakeRoutes.ts";
 import { SandboxResources } from "./SandboxResources.ts";
 import { makeSandboxRuntimeCatalog } from "./SandboxRuntime.ts";
@@ -19,7 +20,7 @@ import type { SandboxProvisioner, SandboxSourcePacker } from "./SandboxSubmissio
 import type { SpritesClient } from "./SpritesClient.ts";
 
 const ROOT = "/home/sprite/t3";
-const WORKSPACE = "/home/sprite/project";
+const WORKSPACE = SANDBOX_WORKSPACE_ROOT;
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const failure = (message: string) => new SandboxSubmissionError({ code: "unavailable", message });
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -180,7 +181,7 @@ fi
 cd ${ROOT}
 trap 'rm -f ${upload}' EXIT
 if [ ! -d ${WORKSPACE}/.git ]; then
-  mkdir -p ${WORKSPACE}
+  sudo install -d -o "$(id -u)" -g "$(id -g)" ${WORKSPACE}
   git -C ${WORKSPACE} init -q
 fi
 git -C ${WORKSPACE} index-pack --stdin < ${upload} >/dev/null

@@ -4,11 +4,15 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ServerConfig } from "../config.ts";
 
+/** Every backend checks the project out here, so a thread's paths, including the ones
+ * providers derive their transcript locations from, survive moving to another sandbox. */
+export const SANDBOX_WORKSPACE_ROOT = "/workspace";
+
 /** Written by the provisioner alongside the destination's settings before startup. */
 export const SandboxDeployment = Schema.Struct({
   artifactIntegrity: Schema.String.check(Schema.isPattern(/^sha256-[a-f0-9]{64}$/)),
   workspaceRoot: Schema.String.check(Schema.isMinLength(1)),
-  /** The launching thread's title; the host name of a sandbox means nothing to users. */
+  /** The backend's own name for the sandbox, so the environment matches its dashboard. */
   label: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
 

@@ -275,6 +275,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
       submission.input.commandId,
     );
     expect(deployments[0]).toContain(`"label":${encode(name)}`);
+    expect(deployments[0]).toContain(`"workspaceRoot":"/workspace"`);
     expect(controlScripts[0]).toContain("auth session issue");
     expect(controlScripts[0]).toContain("--replace-active");
     expect(controlScripts[0]).toContain("flock 9");
