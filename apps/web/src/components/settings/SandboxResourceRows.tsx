@@ -49,6 +49,11 @@ export function canPairSandboxDestinations(
   );
 }
 
+/** The provider's name for the sandbox, which matches its dashboard, once it exists. */
+export function sandboxResourceLabel(submission: SandboxSubmission) {
+  return submission.resourceName ?? submission.input.title;
+}
+
 export function sandboxResourceStatus(submission: SandboxSubmission) {
   if (submission.deletionError) return `Delete failed: ${submission.deletionError}`;
   switch (submission.progress.phase) {
@@ -115,7 +120,7 @@ function SandboxOwnerResources({
     if (
       action === "delete" &&
       (await requestConfirmDialog(
-        `Delete ${submission.input.title}?\nThis permanently deletes the sandbox, its files and its threads, including any running work.`,
+        `Delete ${sandboxResourceLabel(submission)}?\nThis permanently deletes the sandbox, its files and its threads, including any running work.`,
         { variant: "destructive" },
       )) !== true
     )
@@ -173,7 +178,7 @@ function SandboxOwnerResources({
         <EnvironmentRow
           key={commandId}
           kind="cloud"
-          label={submission.input.title}
+          label={sandboxResourceLabel(submission)}
           subtitle={
             <span className={error ? "block truncate text-destructive" : "block truncate"}>
               {configuration
@@ -210,7 +215,7 @@ function SandboxOwnerResources({
                   variant="ghost-muted"
                   size="icon-xs"
                   disabled={!canOperate || busy}
-                  aria-label={`More actions for ${submission.input.title}`}
+                  aria-label={`More actions for ${sandboxResourceLabel(submission)}`}
                 />
               }
             >

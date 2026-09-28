@@ -105,7 +105,7 @@ export const makeSpritesProvisioner = Effect.fnUntraced(function* (
           return yield* failure("The bound sandbox is unavailable.");
         const sprite = existing ?? (yield* sprites.create(resource.name));
         yield* resources.bindSprite(submission.input.commandId, sprite);
-        return;
+        return { resourceName: resource.name };
       }
       if (!resource.sprite) return yield* failure("Sandbox has not been created.");
       const exec = (script: string, input = "") =>

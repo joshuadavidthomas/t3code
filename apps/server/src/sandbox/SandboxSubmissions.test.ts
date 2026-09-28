@@ -31,6 +31,7 @@ import { makeSandboxConfiguration } from "./SandboxConfiguration.ts";
 import {
   makeSandboxSubmissions,
   type SandboxCapturedSecrets,
+  toSandboxSubmission,
   type SandboxProvisioner,
 } from "./SandboxSubmissions.ts";
 
@@ -152,6 +153,7 @@ it.effect(
             if (stage === "create") {
               yield* Deferred.succeed(entered, undefined);
               yield* Deferred.await(release);
+              return { resourceName: "t3-sandbox" };
             }
           }),
       });
@@ -189,6 +191,8 @@ it.effect(
         (yield* service.list).find((value) => value.input.commandId === input.commandId)
           ?.destination,
       ).toEqual(done.destination);
+      // Clients name the sandbox after the provider's own name for it.
+      expect(toSandboxSubmission(done).resourceName).toBe("t3-sandbox");
       expect(done.progress.stages.map((stage) => [stage.id, stage.status])).toEqual([
         ["source", "done"],
         ["create", "done"],

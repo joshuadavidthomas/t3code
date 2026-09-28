@@ -98,6 +98,8 @@ export const SandboxSubmissionRecord = Schema.Struct({
   acceptedAt: IsoDateTime,
   progress: WorktreeSetupSnapshot,
   destination: Schema.NullOr(SandboxDestination),
+  /** The provider's own name for the sandbox, once it exists. */
+  resourceName: Schema.optionalKey(TrimmedNonEmptyString),
   /** Once intake starts, retry reconciles its receipt; cancellation is too late. */
   intakeStarted: Schema.Boolean,
   cancelRequested: Schema.Boolean,
@@ -117,6 +119,7 @@ export const SandboxSubmission = Schema.Struct({
   }),
   progress: WorktreeSetupSnapshot,
   destination: Schema.NullOr(SandboxDestination),
+  resourceName: Schema.optionalKey(TrimmedNonEmptyString),
   intakeStarted: Schema.Boolean,
   cancelRequested: Schema.Boolean,
   deletedAt: Schema.NullOr(IsoDateTime),

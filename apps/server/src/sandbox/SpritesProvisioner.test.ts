@@ -119,7 +119,7 @@ it.effect(
       yield* first.stage("create", submission, prefixed).pipe(Effect.flip);
       expect(name).toMatch(/^orb-t3-[a-f0-9]{32}$/);
       const resumed = yield* open();
-      yield* resumed.stage("create", submission, prefixed);
+      expect(yield* resumed.stage("create", submission, prefixed)).toEqual({ resourceName: name });
       expect(creates).toBe(1);
       const resources = yield* SandboxResources.SandboxResources;
       expect((yield* resources.get(submission.input.commandId)).sprite?.id).toBe("sprite");

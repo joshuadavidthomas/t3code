@@ -66,11 +66,12 @@ export interface SandboxProvisioner {
   readonly resolveSource: (
     input: SandboxSubmitInput,
   ) => Effect.Effect<SandboxPinnedSource, SandboxSubmissionError>;
+  /** The stage that creates the sandbox reports the provider's own name for it. */
   readonly stage: (
     stage: (typeof SANDBOX_PROVISION_STAGES)[number],
     submission: SandboxSubmissionRecord,
     secrets: SandboxCapturedSecrets,
-  ) => Effect.Effect<void, SandboxSubmissionError>;
+  ) => Effect.Effect<{ readonly resourceName: string } | void, SandboxSubmissionError>;
   readonly intake: (
     submission: SandboxSubmissionRecord,
     secrets: SandboxCapturedSecrets,
@@ -110,6 +111,7 @@ export const toSandboxSubmission = (value: SandboxSubmissionRecord): SandboxSubm
   },
   progress: value.progress,
   destination: value.destination,
+  ...(value.resourceName ? { resourceName: value.resourceName } : {}),
   intakeStarted: value.intakeStarted,
   cancelRequested: value.cancelRequested,
   deletedAt: value.deletedAt,
@@ -311,6 +313,9 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
       } else {
         yield* stageStatus(id, stage, "running");
         const cancelled = yield* provisioner.stage(stage, value, snapshot).pipe(
+          Effect.flatMap((result) =>
+            result ? update(id, (current) => ({ ...current, ...result })) : Effect.void,
+          ),
           Effect.as(false),
           Effect.catch((error) =>
             Effect.gen(function* () {
