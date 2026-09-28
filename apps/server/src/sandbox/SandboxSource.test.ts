@@ -74,6 +74,28 @@ it.effect("starts a local branch from a remote-tracking pick and allows no origi
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+it.effect("starts from origin like a new worktree, falling back to the local branch", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* repository;
+    const remote = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sandbox-origin-" });
+    yield* git(remote, ["init", "--bare", "--initial-branch=main"]);
+    yield* git(cwd, ["remote", "add", "origin", remote]);
+    yield* git(cwd, ["push", "origin", "main"]);
+    const published = yield* git(cwd, ["rev-parse", "HEAD"]);
+    yield* commit(cwd, "unpushed");
+    const project = { workspaceRoot: cwd, title: "App" };
+    const fromOrigin = yield* resolveSandboxSource(project, "main", true);
+    expect(fromOrigin.commit).toBe(published);
+    expect(fromOrigin.remoteRef).toBe("origin/main");
+    yield* git(cwd, ["switch", "-c", "local-only"]);
+    const localHead = yield* commit(cwd, "local");
+    const fallback = yield* resolveSandboxSource(project, "local-only", true);
+    expect(fallback.commit).toBe(localHead);
+    expect(fallback.remoteRef).toBeUndefined();
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 it.effect("seeds a fresh repository with exactly the pinned commit", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

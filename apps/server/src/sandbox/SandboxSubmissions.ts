@@ -444,6 +444,14 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
           ),
         ),
       );
+    // Reported like a new worktree's fetch stage.
+    const originMissed =
+      decoded.startFromOrigin === true && !source.remoteRef && source.repositoryUrl !== null;
+    const sourceDetail = source.remoteRef
+      ? `${source.remoteRef} at ${source.commit.slice(0, 7)}`
+      : originMissed
+        ? `origin/${source.branch} not found, using local branch`
+        : null;
     const accepted = yield* lock.withPermits(1)(
       Effect.gen(function* () {
         const previous = yield* replay(decoded);
@@ -474,11 +482,16 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
             stages: ["source" as const, ...SANDBOX_PROVISION_STAGES, "agent" as const].map(
               (id) => ({
                 id,
-                status: id === "source" ? ("done" as const) : ("pending" as const),
+                status:
+                  id !== "source"
+                    ? ("pending" as const)
+                    : originMissed
+                      ? ("warning" as const)
+                      : ("done" as const),
                 startedAt: id === "source" ? at : null,
                 endedAt: id === "source" ? at : null,
                 percent: null,
-                detail: null,
+                detail: id === "source" ? sourceDetail : null,
                 tail: [],
               }),
             ),

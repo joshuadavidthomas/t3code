@@ -54,7 +54,9 @@ export const makeConfiguredSandboxProvisioner = Effect.fnUntraced(function* () {
     );
   const resolveSource: SandboxProvisioner["resolveSource"] = (input) =>
     findProject(input.projectId).pipe(
-      Effect.flatMap((project) => resolveSandboxSource(project, input.branch)),
+      Effect.flatMap((project) =>
+        resolveSandboxSource(project, input.branch, input.startFromOrigin === true),
+      ),
       Effect.provideService(GitVcsDriver, git),
     );
   const packSource: SandboxSourcePacker = (submission) =>

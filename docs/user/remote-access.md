@@ -13,11 +13,13 @@ the environment menu, enable Claude, and under **Variables** choose **Connect
 subscription** to link your Claude Pro or Max subscription with `claude setup-token`.
 To use an API key instead, add `ANTHROPIC_API_KEY` there.
 
-Start a new thread, choose the account from **Run on**, then choose your project,
-branch, and model before sending. The sandbox starts from the branch's latest
-commit on this machine, so unpushed commits come along and uncommitted changes do
-not. The repository can be private or hosted anywhere. The sandbox has no Git
-credentials of its own, so it cannot push until you give it access.
+Start a new thread in your project, choose the account under **New sandbox** in
+the workspace menu, then choose a branch and model before sending. Like a new
+worktree, the sandbox starts from a commit: with **Start from origin** off, your
+local branch, including unpushed commits; with it on, the branch on origin.
+Uncommitted changes stay behind. The repository can be private or hosted
+anywhere. The sandbox has no Git credentials of its own, so it cannot push until
+you give it access.
 
 This first version supports Claude, and the initial message must be text only.
 Mobile can continue a paired sandbox thread; creation is on web and desktop.

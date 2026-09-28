@@ -247,8 +247,7 @@ export function resolveBranchTriggerLabel(input: {
   if (!resolvedActiveBranch) {
     return "Select ref";
   }
-  if (input.sandboxDraft) return `From ${resolvedActiveBranch}`;
-  if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
+  if (input.sandboxDraft || (effectiveEnvMode === "worktree" && !activeWorktreePath)) {
     const baseRef =
       startFromOrigin && resolvedActiveBranchIsRemote === false
         ? `origin/${resolvedActiveBranch}`

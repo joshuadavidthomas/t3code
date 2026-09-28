@@ -2494,12 +2494,11 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeProject, allProjects, projectGroupingSettings, primaryEnvironmentId, environmentById]);
   const sandboxOptions = useMemo(
     () =>
-      sandboxComposer.registrations.filter((registration) =>
-        logicalProjectEnvironments.some(
-          (environment) => environment.environmentId === registration.ownerEnvironmentId,
-        ),
+      // A sandbox starts from this environment's checkout, so only its own accounts apply.
+      sandboxComposer.registrations.filter(
+        (registration) => registration.ownerEnvironmentId === environmentId,
       ),
-    [logicalProjectEnvironments, sandboxComposer.registrations],
+    [environmentId, sandboxComposer.registrations],
   );
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
   const activeEnvironmentOption =
@@ -2508,8 +2507,7 @@ export default function ChatView(props: ChatViewProps) {
     ) ?? null;
   const showComposerEnvironmentIndicator = shouldShowEnvironmentIndicator({
     activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment:
-      hasMultipleEnvironments || sandboxOptions.length > 0 || sandboxTarget !== null,
+    canPickEnvironment: hasMultipleEnvironments,
   });
 
   const openPullRequestDialog = useCallback(
@@ -4006,18 +4004,20 @@ export default function ChatView(props: ChatViewProps) {
         loadBalancedEnvironmentId: null,
         worktreePath: null,
         envMode: "local",
-        // The checkout's branch may exist only locally; the branch picker
-        // fills in origin's default, like a new worktree's base.
-        ...(sandboxTarget ? {} : { branch: null }),
+        // A sandbox is a new workspace, so it takes the new-worktree default.
+        startFromOrigin: resolveNewDraftStartFromOrigin({
+          envMode: "worktree",
+          newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
+        }),
       });
       setMultipleModelSelections(null);
     },
     [
       activeProject,
+      activeProjectSettings.settings.newWorktreesStartFromOrigin,
       draftId,
       envLocked,
       logicalProjectEnvironments,
-      sandboxTarget,
       setDraftThreadContext,
       setMultipleModelSelections,
     ],
@@ -8475,6 +8475,7 @@ export default function ChatView(props: ChatViewProps) {
         runtimeId: sandboxLaunch.runtimeId,
         projectId: activeProject.id,
         branch: activeThreadBranch,
+        ...(startFromOrigin ? { startFromOrigin: true } : {}),
         threadId: threadIdForSend,
         messageId: messageIdForSend,
         prompt: outgoingMessageText,
@@ -10522,11 +10523,7 @@ export default function ChatView(props: ChatViewProps) {
                                 {...(canCheckoutPullRequestIntoThread
                                   ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                                   : {})}
-                                {...(hasMultipleEnvironments ||
-                                sandboxOptions.length > 0 ||
-                                sandboxTarget
-                                  ? { onEnvironmentChange }
-                                  : {})}
+                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
                                 sandboxOptions={sandboxOptions}
                                 sandboxTarget={sandboxTarget}
                                 onSandboxChange={onSandboxChange}

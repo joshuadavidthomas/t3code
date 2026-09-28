@@ -18,9 +18,14 @@ export const withoutCredentials = (remote: string) => {
   return url.toString();
 };
 
-/** Pins a branch of the host project. It needs no remote: the host seeds the sandbox. */
+/** Pins a branch of the host project. It needs no remote: the host seeds the sandbox.
+ * Start from origin follows new worktrees: fetch, then fall back to the local branch. */
 export const resolveSandboxSource = Effect.fnUntraced(
-  function* (project: { readonly workspaceRoot: string; readonly title: string }, branch: string) {
+  function* (
+    project: { readonly workspaceRoot: string; readonly title: string },
+    branch: string,
+    startFromOrigin = false,
+  ) {
     const git = yield* GitVcsDriver;
     const run = (operation: string, args: ReadonlyArray<string>) =>
       git.execute({ operation, cwd: project.workspaceRoot, args, allowNonZeroExit: true });
@@ -34,11 +39,25 @@ export const resolveSandboxSource = Effect.fnUntraced(
     const valid = yield* run("sandbox.validateBranch", ["check-ref-format", "--branch", name]);
     if (valid.exitCode !== 0) return yield* failure(`${branch} isn't a branch in this project.`);
     const origin = yield* run("sandbox.source", ["remote", "get-url", "origin"]);
+    const cwd = project.workspaceRoot;
+    let remote: { commitSha: string; remoteRefName: string } | null = null;
+    if (startFromOrigin && local.exitCode === 0 && origin.exitCode === 0) {
+      yield* git
+        .fetchRemote({ cwd, remoteName: "origin", refName: name })
+        .pipe(Effect.mapError(() => failure(`Couldn't fetch ${name} from origin.`)));
+      if (yield* git.remoteBranchExists({ cwd, remoteName: "origin", refName: name }))
+        remote = yield* git.resolveRemoteTrackingCommit({
+          cwd,
+          refName: name,
+          fallbackRemoteName: "origin",
+        });
+    }
     return yield* decodeSource({
       repositoryUrl: origin.exitCode === 0 ? withoutCredentials(origin.stdout.trim()) : null,
       branch: name,
-      commit: resolved.stdout.trim(),
+      commit: remote?.commitSha ?? resolved.stdout.trim(),
       projectTitle: project.title,
+      ...(remote ? { remoteRef: remote.remoteRefName } : {}),
     });
   },
   Effect.mapError((error) =>

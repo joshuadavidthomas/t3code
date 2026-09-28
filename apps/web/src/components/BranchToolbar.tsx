@@ -2,11 +2,11 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
+  CloudIcon,
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
   ScaleIcon,
-  CloudIcon,
 } from "lucide-react";
 import {
   type Ref,
@@ -38,12 +38,14 @@ import {
   BranchToolbarBranchSelector,
   type BranchToolbarBranchSelectorHandle,
 } from "./BranchToolbarBranchSelector";
+import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import {
-  BranchToolbarEnvironmentSelector,
+  BranchToolbarEnvModeSelector,
+  resolveSandboxWorkspaceLabel,
+  sandboxSelectValue,
   type SandboxOption,
   type SandboxTarget,
-} from "./BranchToolbarEnvironmentSelector";
-import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+} from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { ComposerControl } from "./chat/ComposerControl";
 import {
@@ -109,15 +111,15 @@ interface MobileRunContextSelectorProps {
   showEnvironmentPicker: boolean;
   showEnvironmentIndicator: boolean;
   onEnvironmentChange: ((environmentId: EnvironmentId) => void) | undefined;
-  sandboxOptions: readonly SandboxOption[];
-  sandboxTarget: SandboxTarget | null | undefined;
-  onSandboxChange: ((target: SandboxTarget) => void) | undefined;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
   previousWorktreeLabel: string | null;
   previousWorktreeBranch: string | null;
   onUsePreviousWorktree: () => void;
+  sandboxOptions: readonly SandboxOption[];
+  sandboxTarget: SandboxTarget | null;
+  onSandboxChange: ((target: SandboxTarget) => void) | undefined;
 }
 
 const EMPTY_SANDBOX_OPTIONS: readonly SandboxOption[] = [];
@@ -133,15 +135,15 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   showEnvironmentPicker,
   showEnvironmentIndicator,
   onEnvironmentChange,
-  sandboxOptions,
-  sandboxTarget,
-  onSandboxChange,
   effectiveEnvMode,
   activeWorktreePath,
   onEnvModeChange,
   previousWorktreeLabel,
   previousWorktreeBranch,
   onUsePreviousWorktree,
+  sandboxOptions,
+  sandboxTarget,
+  onSandboxChange,
 }: MobileRunContextSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment = useMemo(
@@ -150,27 +152,28 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   );
   const activeSandbox = sandboxTarget
     ? (sandboxOptions.find(
-        (option) =>
-          option.ownerEnvironmentId === sandboxTarget.ownerEnvironmentId &&
-          option.configurationId === sandboxTarget.configurationId,
+        (option) => sandboxSelectValue(option) === sandboxSelectValue(sandboxTarget),
       ) ?? null)
     : null;
-  const sandboxMenuValue = (option: SandboxTarget) =>
-    `sandbox:${JSON.stringify([option.ownerEnvironmentId, option.configurationId])}`;
-  const WorkspaceIcon =
-    effectiveEnvMode === "worktree"
+  const WorkspaceIcon = sandboxTarget
+    ? CloudIcon
+    : effectiveEnvMode === "worktree"
       ? FolderGit2Icon
       : activeWorktreePath
         ? FolderGitIcon
         : FolderIcon;
   const workspaceLabel = forceNewWorktree
     ? resolveEnvModeLabel("worktree")
-    : envModeLocked
-      ? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)
-      : effectiveEnvMode === "worktree"
-        ? resolveEnvModeLabel("worktree")
-        : resolveCurrentWorkspaceLabel(activeWorktreePath);
-  const isLocked = envLocked || (envModeLocked && !showEnvironmentPicker);
+    : sandboxTarget
+      ? activeSandbox
+        ? resolveSandboxWorkspaceLabel(activeSandbox, sandboxOptions)
+        : "Unavailable"
+      : envModeLocked
+        ? resolveLockedWorkspaceLabel(activeWorktreePath, effectiveEnvMode)
+        : effectiveEnvMode === "worktree"
+          ? resolveEnvModeLabel("worktree")
+          : resolveCurrentWorkspaceLabel(activeWorktreePath);
+  const isLocked = envLocked || envModeLocked;
   const workspaceIcon = (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
@@ -185,9 +188,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     <span className="inline-flex shrink-0 items-center gap-0.5">
       <Tooltip>
         <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-          {sandboxTarget ? (
-            <CloudIcon className="size-3 shrink-0 mx-0!" aria-hidden="true" />
-          ) : autoEnvironmentLabel ? (
+          {autoEnvironmentLabel ? (
             <ScaleIcon className="size-3 shrink-0 mx-0!" aria-hidden="true" />
           ) : (
             <EnvironmentMachineIcon
@@ -196,13 +197,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
             />
           )}
         </TooltipTrigger>
-        <TooltipPopup>
-          {activeSandbox
-            ? `${activeSandbox.label} · ${activeSandbox.providerLabel}`
-            : sandboxTarget
-              ? "Unavailable"
-              : (autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on")}
-        </TooltipPopup>
+        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
       </Tooltip>
       {workspaceIcon}
     </span>
@@ -220,10 +215,8 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
           data-composer-label-motion
           className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-drawer group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
         >
-          {sandboxTarget
-            ? (activeSandbox?.label ?? "Unavailable")
-            : (autoEnvironmentLabel ??
-              (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel))}
+          {autoEnvironmentLabel ??
+            (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
         </span>
       </span>
     </>
@@ -260,26 +253,17 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
         className={previousWorktreeLabel ? "w-[min(21rem,calc(100vw-2rem))]" : undefined}
         {...composerFloatingLayerProps}
       >
-        {showEnvironmentPicker ? (
+        {showEnvironmentPicker && availableEnvironments && onEnvironmentChange ? (
           <>
             <MenuGroup>
               <MenuGroupLabel>Run on</MenuGroupLabel>
               <MenuRadioGroup
-                value={
-                  sandboxTarget
-                    ? sandboxMenuValue(sandboxTarget)
-                    : autoEnvironmentLabel
-                      ? "auto"
-                      : environmentId
+                value={autoEnvironmentLabel ? "auto" : environmentId}
+                onValueChange={(value) =>
+                  value === "auto"
+                    ? onAutoEnvironment?.()
+                    : onEnvironmentChange(value as EnvironmentId)
                 }
-                onValueChange={(value) => {
-                  if (value === "auto") return onAutoEnvironment?.();
-                  const sandbox = sandboxOptions.find(
-                    (option) => sandboxMenuValue(option) === value,
-                  );
-                  if (sandbox) return onSandboxChange?.(sandbox);
-                  onEnvironmentChange?.(value as EnvironmentId);
-                }}
               >
                 {onAutoEnvironment && (
                   <MenuRadioItem
@@ -298,7 +282,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                     </span>
                   </MenuRadioItem>
                 )}
-                {availableEnvironments?.map((env) => (
+                {availableEnvironments.map((env) => (
                   <MenuRadioItem
                     key={env.environmentId}
                     disabled={envLocked}
@@ -311,68 +295,65 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                     </span>
                   </MenuRadioItem>
                 ))}
-                {sandboxOptions.map((option) => (
-                  <MenuRadioItem
-                    key={sandboxMenuValue(option)}
-                    disabled={envLocked}
-                    value={sandboxMenuValue(option)}
-                    closeOnClick
-                  >
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      <CloudIcon className="size-3" aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {option.providerLabel}
-                      </span>
-                    </span>
-                  </MenuRadioItem>
-                ))}
               </MenuRadioGroup>
             </MenuGroup>
-            {!sandboxTarget ? <MenuSeparator /> : null}
+            <MenuSeparator />
           </>
         ) : null}
-        {!sandboxTarget ? (
-          <MenuGroup>
-            <MenuGroupLabel>Workspace</MenuGroupLabel>
-            <MenuRadioGroup
-              value={effectiveEnvMode}
-              onValueChange={(value) => {
-                if (value === "previous-worktree") {
-                  onUsePreviousWorktree();
-                  return;
-                }
-                onEnvModeChange(value as EnvMode);
-              }}
-            >
+        <MenuGroup>
+          <MenuGroupLabel>Workspace</MenuGroupLabel>
+          <MenuRadioGroup
+            value={sandboxTarget ? sandboxSelectValue(sandboxTarget) : effectiveEnvMode}
+            onValueChange={(value) => {
+              if (value === "previous-worktree") {
+                onUsePreviousWorktree();
+                return;
+              }
+              const sandbox = sandboxOptions.find((option) => sandboxSelectValue(option) === value);
+              if (sandbox) {
+                onSandboxChange?.(sandbox);
+                return;
+              }
+              onEnvModeChange(value as EnvMode);
+            }}
+          >
+            <MenuRadioItem disabled={envModeLocked || forceNewWorktree} value="local" closeOnClick>
+              <span className="flex min-w-0 items-center gap-1.5">
+                {activeWorktreePath ? (
+                  <FolderGitIcon className="size-3" />
+                ) : (
+                  <FolderIcon className="size-3" />
+                )}
+                <MiddleTruncate value={resolveCurrentWorkspaceLabel(activeWorktreePath)} />
+              </span>
+            </MenuRadioItem>
+            <MenuRadioItem disabled={envModeLocked} value="worktree" closeOnClick>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <FolderGit2Icon className="size-3" />
+                <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
+              </span>
+            </MenuRadioItem>
+            {previousWorktreeLabel ? (
+              <MenuRadioItem disabled={envModeLocked} value="previous-worktree" closeOnClick>
+                <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
+              </MenuRadioItem>
+            ) : null}
+            {sandboxOptions.map((option) => (
               <MenuRadioItem
-                disabled={envModeLocked || forceNewWorktree}
-                value="local"
+                key={sandboxSelectValue(option)}
+                disabled={envModeLocked}
+                value={sandboxSelectValue(option)}
                 closeOnClick
               >
                 <span className="flex min-w-0 items-center gap-1.5">
-                  {activeWorktreePath ? (
-                    <FolderGitIcon className="size-3" />
-                  ) : (
-                    <FolderIcon className="size-3" />
-                  )}
-                  <MiddleTruncate value={resolveCurrentWorkspaceLabel(activeWorktreePath)} />
+                  <CloudIcon className="size-3" aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate">New sandbox</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{option.label}</span>
                 </span>
               </MenuRadioItem>
-              <MenuRadioItem disabled={envModeLocked} value="worktree" closeOnClick>
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <FolderGit2Icon className="size-3" />
-                  <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
-                </span>
-              </MenuRadioItem>
-              {previousWorktreeLabel ? (
-                <MenuRadioItem disabled={envModeLocked} value="previous-worktree" closeOnClick>
-                  <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
-                </MenuRadioItem>
-              ) : null}
-            </MenuRadioGroup>
-          </MenuGroup>
-        ) : null}
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
       </MenuPopup>
     </Menu>
   );
@@ -590,7 +571,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   availableEnvironments,
   onEnvironmentChange,
   sandboxOptions = EMPTY_SANDBOX_OPTIONS,
-  sandboxTarget,
+  sandboxTarget = null,
   onSandboxChange,
   composerControlsHostRef,
   contextStripVisible = true,
@@ -673,19 +654,14 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
 
   const showEnvironmentPicker = Boolean(
-    (availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange) ||
-    (sandboxOptions.length > 0 && onSandboxChange) ||
-    (sandboxTarget && onEnvironmentChange),
+    availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
   );
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
-  const showEnvironmentIndicator =
-    shouldShowEnvironmentIndicator({
-      activeEnvironment: activeEnvironmentOption,
-      canPickEnvironment: showEnvironmentPicker,
-    }) ||
-    sandboxOptions.length > 0 ||
-    Boolean(sandboxTarget);
+  const showEnvironmentIndicator = shouldShowEnvironmentIndicator({
+    activeEnvironment: activeEnvironmentOption,
+    canPickEnvironment: showEnvironmentPicker,
+  });
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
 
@@ -716,15 +692,15 @@ export const BranchToolbar = memo(function BranchToolbar({
             showEnvironmentPicker={showEnvironmentPicker}
             showEnvironmentIndicator={showEnvironmentIndicator}
             onEnvironmentChange={onEnvironmentChange}
-            sandboxOptions={sandboxOptions}
-            sandboxTarget={sandboxTarget}
-            onSandboxChange={onSandboxChange}
             effectiveEnvMode={effectiveEnvMode}
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
+            sandboxOptions={sandboxOptions}
+            sandboxTarget={sandboxTarget}
+            onSandboxChange={onSandboxChange}
           />
         </div>
       ) : null}
@@ -736,20 +712,17 @@ export const BranchToolbar = memo(function BranchToolbar({
             composerControlsHostRef ? "shrink" : "flex-1",
           )}
         >
-          {showEnvironmentIndicator && (
+          {showEnvironmentIndicator && availableEnvironments && (
             <>
               <BranchToolbarEnvironmentSelector
                 autoEnvironmentLabel={autoEnvironmentLabel}
                 onAutoEnvironment={onAutoEnvironment}
                 envLocked={envLocked}
                 environmentId={environmentId}
-                availableEnvironments={availableEnvironments ?? []}
-                sandboxOptions={sandboxOptions}
-                sandboxTarget={sandboxTarget}
-                onSandboxChange={onSandboxChange}
+                availableEnvironments={availableEnvironments}
                 {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
               />
-              {showGitControls && !sandboxTarget ? (
+              {showGitControls ? (
                 <Separator
                   orientation="vertical"
                   className="mx-0.5 h-3.5!"
@@ -758,7 +731,7 @@ export const BranchToolbar = memo(function BranchToolbar({
               ) : null}
             </>
           )}
-          {showGitControls && !sandboxTarget ? (
+          {showGitControls ? (
             <BranchToolbarEnvModeSelector
               forceNewWorktree={forceNewWorktree}
               envLocked={envModeLocked}
@@ -768,6 +741,9 @@ export const BranchToolbar = memo(function BranchToolbar({
               previousWorktreeLabel={previousWorktreeLabel}
               previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
               onUsePreviousWorktree={onUsePreviousWorktree}
+              sandboxOptions={sandboxOptions}
+              sandboxTarget={sandboxTarget}
+              onSandboxChange={onSandboxChange}
             />
           ) : null}
         </div>

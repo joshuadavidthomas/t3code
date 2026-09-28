@@ -50,6 +50,8 @@ export const SandboxSubmitInput = Schema.Struct({
   runtimeId: TrimmedNonEmptyString,
   projectId: ProjectId,
   branch: TrimmedNonEmptyString,
+  /** Like a new worktree, start from origin's copy of the branch when it has one. */
+  startFromOrigin: Schema.optional(Schema.Boolean),
   threadId: ThreadId,
   messageId: MessageId,
   prompt: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100_000)),
@@ -68,6 +70,8 @@ export const SandboxPinnedSource = Schema.Struct({
   commit: Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/)),
   branch: TrimmedNonEmptyString,
   projectTitle: Schema.optional(TrimmedNonEmptyString),
+  /** Set when start from origin found the branch there, e.g. "origin/main". */
+  remoteRef: Schema.optional(TrimmedNonEmptyString),
 });
 export type SandboxPinnedSource = typeof SandboxPinnedSource.Type;
 

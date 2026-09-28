@@ -906,7 +906,7 @@ export function BranchToolbarBranchSelector({
               />
             </ComboboxListVirtualized>
           </div>
-          {isSelectingWorktreeBase ? (
+          {isSelectingWorktreeBase || sandboxDraft ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -922,15 +922,18 @@ export function BranchToolbarBranchSelector({
                       id={startFromOriginSwitchId}
                       checked={startFromOrigin}
                       size="sm"
-                      aria-label="Start worktree from origin"
+                      aria-label={
+                        sandboxDraft ? "Start sandbox from origin" : "Start worktree from origin"
+                      }
                       onCheckedChange={(checked) => onStartFromOriginChange(Boolean(checked))}
                     />
                   </label>
                 }
               />
               <TooltipPopup side="top">
-                Creates the worktree from the latest matching branch on origin instead of your local
-                branch.
+                {sandboxDraft
+                  ? "Starts the sandbox from the latest matching branch on origin instead of your local branch."
+                  : "Creates the worktree from the latest matching branch on origin instead of your local branch."}
               </TooltipPopup>
             </Tooltip>
           ) : null}

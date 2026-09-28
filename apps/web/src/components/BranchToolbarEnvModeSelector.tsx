@@ -1,4 +1,5 @@
-import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { CloudIcon, FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import {
@@ -22,6 +23,29 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
 
+/** A sandbox account on the selected environment, offered as a new workspace. */
+export interface SandboxOption {
+  ownerEnvironmentId: EnvironmentId;
+  configurationId: string;
+  label: string;
+  providerLabel: string;
+}
+
+export interface SandboxTarget {
+  ownerEnvironmentId: EnvironmentId;
+  configurationId: string;
+}
+
+export const sandboxSelectValue = (option: SandboxTarget) =>
+  `sandbox:${JSON.stringify([option.ownerEnvironmentId, option.configurationId])}`;
+
+/** Parallels "New worktree"; names the account only when there are several to tell apart. */
+export const resolveSandboxWorkspaceLabel = (
+  option: SandboxOption,
+  options: readonly SandboxOption[],
+) => (options.length > 1 ? `New sandbox · ${option.label}` : "New sandbox");
+const EMPTY_SANDBOX_OPTIONS: readonly SandboxOption[] = [];
+
 interface BranchToolbarEnvModeSelectorProps {
   forceNewWorktree?: boolean;
   envLocked: boolean;
@@ -31,6 +55,9 @@ interface BranchToolbarEnvModeSelectorProps {
   previousWorktreeLabel?: string | null;
   previousWorktreeBranch?: string | null;
   onUsePreviousWorktree?: () => void;
+  sandboxOptions?: readonly SandboxOption[];
+  sandboxTarget?: SandboxTarget | null | undefined;
+  onSandboxChange?: ((target: SandboxTarget) => void) | undefined;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
@@ -42,6 +69,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   previousWorktreeLabel,
   previousWorktreeBranch = null,
   onUsePreviousWorktree,
+  sandboxOptions = EMPTY_SANDBOX_OPTIONS,
+  sandboxTarget = null,
+  onSandboxChange,
 }: BranchToolbarEnvModeSelectorProps) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
@@ -52,9 +82,19 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       ...(showPreviousWorktree && previousWorktreeLabel
         ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
         : []),
+      ...sandboxOptions.map((option) => ({
+        value: sandboxSelectValue(option),
+        label: resolveSandboxWorkspaceLabel(option, sandboxOptions),
+      })),
     ],
-    [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree],
+    [activeWorktreePath, previousWorktreeLabel, sandboxOptions, showPreviousWorktree],
   );
+  const activeSandbox = sandboxTarget
+    ? (sandboxOptions.find(
+        (option) => sandboxSelectValue(option) === sandboxSelectValue(sandboxTarget),
+      ) ?? null)
+    : null;
+  const sandboxLabel = activeSandbox?.label ?? "Unavailable";
 
   if (envLocked || forceNewWorktree) {
     return (
@@ -95,10 +135,15 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   return (
     <Select
       modal={false}
-      value={effectiveEnvMode}
+      value={sandboxTarget ? sandboxSelectValue(sandboxTarget) : effectiveEnvMode}
       onValueChange={(value: string | null) => {
         if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
           onUsePreviousWorktree?.();
+          return;
+        }
+        const sandbox = sandboxOptions.find((option) => sandboxSelectValue(option) === value);
+        if (sandbox) {
+          onSandboxChange?.(sandbox);
           return;
         }
         onEnvModeChange(value as EnvMode);
@@ -118,7 +163,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             />
           }
         >
-          {effectiveEnvMode === "worktree" ? (
+          {sandboxTarget ? (
+            <CloudIcon className="size-3" aria-hidden="true" />
+          ) : effectiveEnvMode === "worktree" ? (
             <FolderGit2Icon className="size-3" />
           ) : activeWorktreePath ? (
             <FolderGitIcon className="size-3" />
@@ -133,14 +180,18 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               data-composer-label-motion
               className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-drawer group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
             >
-              <SelectValue />
+              {sandboxTarget && !activeSandbox ? sandboxLabel : <SelectValue />}
             </span>
           </span>
         </TooltipTrigger>
         <TooltipPopup>
-          {effectiveEnvMode === "worktree"
-            ? resolveEnvModeLabel("worktree")
-            : resolveCurrentWorkspaceLabel(activeWorktreePath)}
+          {activeSandbox
+            ? `${activeSandbox.label} · ${activeSandbox.providerLabel}`
+            : sandboxTarget
+              ? sandboxLabel
+              : effectiveEnvMode === "worktree"
+                ? resolveEnvModeLabel("worktree")
+                : resolveCurrentWorkspaceLabel(activeWorktreePath)}
         </TooltipPopup>
       </Tooltip>
       <SelectPopup
@@ -171,6 +222,17 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               <PreviousWorktreeItemContent branch={previousWorktreeBranch} />
             </SelectItem>
           ) : null}
+          {sandboxOptions.map((option) => (
+            <SelectItem key={sandboxSelectValue(option)} value={sandboxSelectValue(option)}>
+              <span className="flex w-full items-center justify-between gap-5">
+                <span className="inline-flex items-center gap-1.5">
+                  <CloudIcon className="size-3" aria-hidden="true" />
+                  New sandbox
+                </span>
+                <span className="text-xs text-muted-foreground">{option.label}</span>
+              </span>
+            </SelectItem>
+          ))}
         </SelectGroup>
       </SelectPopup>
     </Select>
