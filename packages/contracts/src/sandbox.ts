@@ -27,10 +27,6 @@ export const SandboxConfiguration = Schema.Struct({
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
   revision: Revision,
   credentialConfigured: Schema.Boolean,
-  /** Sandboxes sign in to GitHub with it, so they can push and open pull requests. */
-  gitHubCredentialConfigured: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(false)),
-  ),
   namePrefix: SandboxNamePrefix.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   verifiedAt: Schema.NullOr(Text),
   providerInstances: ProviderInstanceConfigMap.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -96,10 +92,6 @@ export const SandboxConfigurationSaveInput = Schema.Struct({
   // Omitted preserves the credential; a string replaces it.
   credential: Schema.optionalKey(
     Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
-  ),
-  // Omitted preserves the GitHub token; a string replaces it and null removes it.
-  gitHubCredential: Schema.optionalKey(
-    Schema.NullOr(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096))),
   ),
 });
 export type SandboxConfigurationSaveInput = typeof SandboxConfigurationSaveInput.Type;

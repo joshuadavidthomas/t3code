@@ -146,6 +146,7 @@ it.effect(
       const stages: string[] = [];
       const service = yield* makeSandboxSubmissions(configurations, {
         ...baseProvisioner,
+        gitHubCredential: () => Effect.succeed("host-gh-token"),
         stage: (stage, _value, captured) =>
           Effect.gen(function* () {
             stages.push(stage);
@@ -211,6 +212,9 @@ it.effect(
       const rows = yield* sql<{ body: string }>`SELECT body FROM sandbox_submissions`;
       expect(rows[0]?.body).not.toContain("personal-token");
       expect(rows[0]?.body).not.toContain("personal-provider-key");
+      // The host's GitHub login travels only in the private snapshot.
+      expect(captures.every((capture) => capture.gitHubCredential === "host-gh-token")).toBe(true);
+      expect(rows[0]?.body).not.toContain("host-gh-token");
       expect(done.progress.sequence).toBeGreaterThan(accepted.progress.sequence);
     }).pipe(Effect.scoped, Effect.provide(dependencies)),
 );

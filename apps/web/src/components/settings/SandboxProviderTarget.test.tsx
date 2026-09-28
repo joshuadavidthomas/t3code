@@ -105,7 +105,6 @@ function configuration(
     name: "Personal",
     revision,
     credentialConfigured: true,
-    gitHubCredentialConfigured: false,
     namePrefix: "",
     verifiedAt: null,
     providerInstances,

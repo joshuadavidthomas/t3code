@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import { HttpClient } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { GitHubCli } from "../sourceControl/GitHubCli.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { ServerConfig } from "../config.ts";
 import {
@@ -29,6 +30,7 @@ export const makeConfiguredSandboxProvisioner = Effect.fnUntraced(function* () {
   const config = yield* ServerConfig;
   const projects = yield* ProjectionSnapshotQuery;
   const git = yield* GitVcsDriver;
+  const github = yield* GitHubCli;
   const http = yield* HttpClient.HttpClient;
   const currentArtifact = yield* Effect.cachedWithTTL(
     resolveCurrentSandboxArtifact().pipe(
@@ -58,6 +60,20 @@ export const makeConfiguredSandboxProvisioner = Effect.fnUntraced(function* () {
         resolveSandboxSource(project, input.branch, input.startFromOrigin === true),
       ),
       Effect.provideService(GitVcsDriver, git),
+    );
+  // Sandboxes run on your own account, so they share the host's GitHub login, the
+  // token T3's GitHub calls already use here. A host without one launches unsigned.
+  const gitHubCredential: SandboxProvisioner["gitHubCredential"] = (input) =>
+    findProject(input.projectId).pipe(
+      Effect.flatMap((project) =>
+        github.execute({
+          cwd: project.workspaceRoot,
+          args: ["auth", "token", "--hostname", "github.com"],
+          env: { GH_DEBUG: "" },
+        }),
+      ),
+      Effect.map((output) => output.stdout.trim() || null),
+      Effect.orElseSucceed(() => null),
     );
   const packSource: SandboxSourcePacker = (submission) =>
     findProject(submission.input.projectId).pipe(
@@ -93,6 +109,7 @@ export const makeConfiguredSandboxProvisioner = Effect.fnUntraced(function* () {
   );
   return {
     ...provisioner,
+    gitHubCredential,
     getRuntime: currentArtifact.pipe(
       Effect.map((artifact) => artifact.runtime),
       Effect.orElseSucceed(() => null),

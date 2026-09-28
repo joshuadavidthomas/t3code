@@ -20,11 +20,9 @@ local branch, including unpushed commits; with it on, the branch on origin.
 Uncommitted changes stay behind. The repository can be private or hosted
 anywhere. Commits made in the sandbox use your project's Git name and email.
 
-To push and open pull requests from a sandbox, add a **GitHub token** to the
-account. It signs sandboxes in to GitHub the way `gh auth login` signs in a
-machine, and only sandboxes launched after you add it get it. Use `gh auth token`
-on a trusted machine, or a fine-grained token limited to the repositories you
-want sandboxes to reach.
+Sandboxes sign in to GitHub with the launching machine's GitHub CLI login, so
+if `gh auth status` works there, sandboxes can push and open pull requests.
+Each sandbox keeps the login it launched with.
 
 This first version supports Claude, and the initial message must be text only.
 Mobile can continue a paired sandbox thread; creation is on web and desktop.

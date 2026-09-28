@@ -64,6 +64,8 @@ export interface SandboxProvisioner {
   readonly catalog: SandboxRuntimeCatalog;
   readonly runtime: SandboxRuntimeManifest | null;
   readonly getRuntime?: Effect.Effect<SandboxRuntimeManifest | null>;
+  /** The host's own GitHub login, which sandboxes it launches sign in with, like seeding. */
+  readonly gitHubCredential?: (input: SandboxSubmitInput) => Effect.Effect<string | null>;
   readonly resolveSource: (
     input: SandboxSubmitInput,
   ) => Effect.Effect<SandboxPinnedSource, SandboxSubmissionError>;
@@ -451,6 +453,9 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
           ),
         ),
       );
+    const gitHubCredential = provisioner.gitHubCredential
+      ? yield* provisioner.gitHubCredential(decoded)
+      : null;
     // Start from origin fetched the branch, so report it as a new worktree's fetch stage.
     const firstStage = decoded.startFromOrigin === true ? ("fetch" as const) : ("source" as const);
     const originMissed =
@@ -510,7 +515,7 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
           credential: capture.credential,
           namePrefix: capture.configuration.namePrefix,
           providerInstances: capture.providerInstances,
-          ...(capture.gitHubCredential ? { gitHubCredential: capture.gitHubCredential } : {}),
+          ...(gitHubCredential ? { gitHubCredential } : {}),
         }).pipe(Effect.mapError(storageFailure));
         const body = yield* encode(value).pipe(Effect.mapError(storageFailure));
         yield* Effect.uninterruptible(

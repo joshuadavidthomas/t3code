@@ -30,9 +30,12 @@ A sandbox is its own environment, created by the host that holds its provider
 account. The host seeds it with one pinned commit of a host project, packed
 from the local repository and uploaded through the provider, so a sandbox needs
 no access to the project's remote and can start from unpushed or private work.
-This is the only time code moves between environments. Afterward the sandbox
+This is the only time code moves between environments. The host also hands
+over its GitHub CLI login and Git identity at launch: a sandbox runs on the
+user's own provider account, so it is trusted like the user's machine, and
+stock T3 only uses whatever login a machine already has. Afterward the sandbox
 is independent: nothing syncs it back to the host, and work leaves it the way it
-leaves any remote environment, through its own Git credentials.
+leaves any remote environment, by pushing.
 [SandboxSource](../../apps/server/src/sandbox/SandboxSource.ts) pins and packs
 the commit.
 

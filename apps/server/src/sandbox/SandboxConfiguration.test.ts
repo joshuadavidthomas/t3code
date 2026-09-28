@@ -93,50 +93,6 @@ it.layer(NodeServices.layer)("sandbox configuration", (it) => {
     }).pipe(Effect.provide(dependencies)),
   );
 
-  it.effect("keeps a GitHub token secret until it is replaced or removed", () =>
-    Effect.gen(function* () {
-      const { service, filePath, fs } = yield* fixture;
-      const secrets = yield* Secrets.ServerSecretStore;
-      const gitHubKey = (id: string) => `sandbox-github-${id}`;
-      const saved = yield* service.save({
-        ...create("Work", "work-token"),
-        gitHubCredential: "gh-1",
-      });
-      expect(saved.gitHubCredentialConfigured).toBe(true);
-      expect(yield* fs.readFileString(filePath)).not.toContain("gh-1");
-      const renamed = yield* service.save({
-        id: saved.id,
-        provider: "sprites",
-        name: "Work renamed",
-        expectedRevision: saved.revision,
-      });
-      expect(renamed.gitHubCredentialConfigured).toBe(true);
-      const read = () =>
-        secrets
-          .get(gitHubKey(saved.id))
-          .pipe(Effect.map(Option.map((value) => new TextDecoder().decode(value))));
-      expect(yield* read()).toEqual(Option.some("gh-1"));
-      const cleared = yield* service.save({
-        id: saved.id,
-        provider: "sprites",
-        name: "Work",
-        expectedRevision: renamed.revision,
-        gitHubCredential: null,
-      });
-      expect(cleared.gitHubCredentialConfigured).toBe(false);
-      expect(Option.isNone(yield* read())).toBe(true);
-      const again = yield* service.save({
-        id: saved.id,
-        provider: "sprites",
-        name: "Work",
-        expectedRevision: cleared.revision,
-        gitHubCredential: "gh-2",
-      });
-      yield* service.remove({ id: saved.id, expectedRevision: again.revision });
-      expect(Option.isNone(yield* read())).toBe(true);
-    }).pipe(Effect.provide(dependencies)),
-  );
-
   it.effect("keeps a validated Sprite name prefix until it is changed", () =>
     Effect.gen(function* () {
       const { service } = yield* fixture;

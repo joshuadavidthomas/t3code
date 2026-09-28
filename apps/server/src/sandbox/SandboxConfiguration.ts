@@ -27,7 +27,6 @@ import { redactProviderEnvironmentVariable } from "../serverSettings.ts";
 
 const secretKey = (id: string) => `sandbox-sprites-${id}`;
 const providerSecretKey = (id: string) => `sandbox-provider-instances-${id}`;
-const gitHubSecretKey = (id: string) => `sandbox-github-${id}`;
 const SPRITES_API_URL = "https://api.sprites.dev/v1/sprites";
 const failure = (code: SandboxConfigurationError["code"], message: string) =>
   new SandboxConfigurationError({ code, message });
@@ -104,25 +103,14 @@ export const makeSandboxConfiguration = Effect.fnUntraced(function* (
         const id = current?.id ?? NodeCrypto.randomUUID();
         const key = secretKey(id);
         const previous = yield* secrets.get(key).pipe(Effect.mapError(storageFailure));
-        const gitHubKey = gitHubSecretKey(id);
-        const previousGitHub = yield* secrets.get(gitHubKey).pipe(Effect.mapError(storageFailure));
         const next: SandboxConfiguration = {
-          ...(current ?? {
-            providerInstances: {},
-            providerModelPreferences: {},
-            namePrefix: "",
-            gitHubCredentialConfigured: false,
-          }),
+          ...(current ?? { providerInstances: {}, providerModelPreferences: {}, namePrefix: "" }),
           id,
           provider: decoded.provider,
           name: decoded.name,
           ...(decoded.namePrefix !== undefined ? { namePrefix: decoded.namePrefix } : {}),
           revision: decoded.expectedRevision + 1,
           credentialConfigured: decoded.credential !== undefined || Option.isSome(previous),
-          gitHubCredentialConfigured:
-            decoded.gitHubCredential === undefined
-              ? Option.isSome(previousGitHub)
-              : decoded.gitHubCredential !== null,
           verifiedAt: null,
         };
         const nextValues = current
@@ -135,9 +123,6 @@ export const makeSandboxConfiguration = Effect.fnUntraced(function* (
                 if (decoded.credential !== undefined) {
                   yield* secrets.set(key, new TextEncoder().encode(decoded.credential));
                 }
-                if (decoded.gitHubCredential === null) yield* secrets.remove(gitHubKey);
-                else if (decoded.gitHubCredential !== undefined)
-                  yield* secrets.set(gitHubKey, new TextEncoder().encode(decoded.gitHubCredential));
                 yield* persist(nextValues);
               }),
             );
@@ -146,11 +131,6 @@ export const makeSandboxConfiguration = Effect.fnUntraced(function* (
                 yield* Option.isSome(previous)
                   ? secrets.set(key, previous.value)
                   : secrets.remove(key);
-              }
-              if (decoded.gitHubCredential !== undefined) {
-                yield* Option.isSome(previousGitHub)
-                  ? secrets.set(gitHubKey, previousGitHub.value)
-                  : secrets.remove(gitHubKey);
               }
               return yield* Effect.failCause(write.cause);
             }
@@ -173,15 +153,12 @@ export const makeSandboxConfiguration = Effect.fnUntraced(function* (
         const previousProviders = yield* secrets
           .get(providerKey)
           .pipe(Effect.mapError(storageFailure));
-        const gitHubKey = gitHubSecretKey(decoded.id);
-        const previousGitHub = yield* secrets.get(gitHubKey).pipe(Effect.mapError(storageFailure));
         yield* Effect.uninterruptible(
           Effect.gen(function* () {
             const deletion = yield* Effect.exit(
               Effect.gen(function* () {
                 yield* secrets.remove(key);
                 yield* secrets.remove(providerKey);
-                yield* secrets.remove(gitHubKey);
                 yield* persist(values.filter((value) => value.id !== decoded.id));
               }),
             );
@@ -189,8 +166,6 @@ export const makeSandboxConfiguration = Effect.fnUntraced(function* (
               if (Option.isSome(previous)) yield* secrets.set(key, previous.value);
               if (Option.isSome(previousProviders))
                 yield* secrets.set(providerKey, previousProviders.value);
-              if (Option.isSome(previousGitHub))
-                yield* secrets.set(gitHubKey, previousGitHub.value);
               return yield* Effect.failCause(deletion.cause);
             }
           }),
@@ -330,7 +305,7 @@ export const makeSandboxConfiguration = Effect.fnUntraced(function* (
         }),
       );
     });
-  // Capture every credential under the same revision lock as configuration writes.
+  // Capture both credentials under the same revision lock as configuration writes.
   // This is server-only; the submission service stores its own immutable secret snapshot.
   const capture = (id: string, expectedRevision: number) =>
     lock.withPermits(1)(
@@ -347,14 +322,10 @@ export const makeSandboxConfiguration = Effect.fnUntraced(function* (
         const providerInstances = yield* decodeProviderInstances(
           new TextDecoder().decode(stored.value),
         ).pipe(Effect.mapError(storageFailure));
-        const gitHub = yield* secrets
-          .get(gitHubSecretKey(id))
-          .pipe(Effect.mapError(storageFailure));
         return {
           configuration: current,
           credential: new TextDecoder().decode(token.value),
           providerInstances,
-          gitHubCredential: Option.isSome(gitHub) ? new TextDecoder().decode(gitHub.value) : null,
         };
       }),
     );
