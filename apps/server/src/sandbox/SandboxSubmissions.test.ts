@@ -257,6 +257,22 @@ it.effect("offers models before the runtime is available and refuses the launch 
   }).pipe(Effect.scoped, Effect.provide(dependencies)),
 );
 
+it.effect("reports start from origin like a new worktree's fetch stage", () =>
+  Effect.gen(function* () {
+    const { configurations, input } = yield* setup;
+    const service = yield* makeSandboxSubmissions(configurations, {
+      ...baseProvisioner,
+      stage: () => Effect.never,
+    });
+    const missed = yield* service.submit({ ...input, startFromOrigin: true });
+    expect(missed.progress.stages[0]).toMatchObject({
+      id: "fetch",
+      status: "warning",
+      detail: "origin/main not found, using local branch",
+    });
+  }).pipe(Effect.scoped, Effect.provide(dependencies)),
+);
+
 it.effect("settles a submission as failed when a setup stage defects", () =>
   Effect.gen(function* () {
     const { configurations, input } = yield* setup;

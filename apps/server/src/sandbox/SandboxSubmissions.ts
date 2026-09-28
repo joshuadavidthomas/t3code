@@ -444,7 +444,8 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
           ),
         ),
       );
-    // Reported like a new worktree's fetch stage.
+    // Start from origin fetched the branch, so report it as a new worktree's fetch stage.
+    const firstStage = decoded.startFromOrigin === true ? ("fetch" as const) : ("source" as const);
     const originMissed =
       decoded.startFromOrigin === true && !source.remoteRef && source.repositoryUrl !== null;
     const sourceDetail = source.remoteRef
@@ -479,22 +480,20 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
             setupScript: null,
             error: null,
             sequence: 1,
-            stages: ["source" as const, ...SANDBOX_PROVISION_STAGES, "agent" as const].map(
-              (id) => ({
-                id,
-                status:
-                  id !== "source"
-                    ? ("pending" as const)
-                    : originMissed
-                      ? ("warning" as const)
-                      : ("done" as const),
-                startedAt: id === "source" ? at : null,
-                endedAt: id === "source" ? at : null,
-                percent: null,
-                detail: id === "source" ? sourceDetail : null,
-                tail: [],
-              }),
-            ),
+            stages: [firstStage, ...SANDBOX_PROVISION_STAGES, "agent" as const].map((id) => ({
+              id,
+              status:
+                id !== firstStage
+                  ? ("pending" as const)
+                  : originMissed
+                    ? ("warning" as const)
+                    : ("done" as const),
+              startedAt: id === firstStage ? at : null,
+              endedAt: id === firstStage ? at : null,
+              percent: null,
+              detail: id === firstStage ? sourceDetail : null,
+              tail: [],
+            })),
           },
         };
         // Unique per attempt: a crash before SQL commit can leave an orphan secret,

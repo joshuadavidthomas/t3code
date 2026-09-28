@@ -1,4 +1,5 @@
 import {
+  type ProviderInstanceConfigMap,
   SandboxDestination,
   SandboxRuntimeManifest,
   SandboxSubmissionError,
@@ -8,6 +9,7 @@ import * as NodeUtil from "node:util";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { loadSandboxArtifact } from "./SandboxArtifact.ts";
 import { SandboxIntakeRequest } from "./SandboxIntakeRoutes.ts";
@@ -49,6 +51,24 @@ req.setTimeout(60000, () => req.destroy());
 req.on('error', () => {process.exitCode=1});
 process.stdin.pipe(req);`)}
 `;
+
+// The Sprite image ships its own older Claude on the login shell's PATH, which T3
+// puts ahead of the service PATH, so name the pinned install explicitly.
+const withInstalledClaude = (instances: ProviderInstanceConfigMap): ProviderInstanceConfigMap =>
+  Object.fromEntries(
+    Object.entries(instances).map(([id, instance]) => [
+      id,
+      instance.driver === "claudeAgent"
+        ? {
+            ...instance,
+            config: {
+              ...(Predicate.isObject(instance.config) ? instance.config : {}),
+              binaryPath: `${ROOT}/providers/bin/claude`,
+            },
+          }
+        : instance,
+    ]),
+  );
 
 /** Reconciles each named stage against a persisted resource and an immutable artifact. */
 export const makeSpritesProvisioner = Effect.fnUntraced(function* (
@@ -130,7 +150,8 @@ runtime/t3 sandbox-runtime-manifest --artifact-integrity ${quote(selectedArtifac
         const deployment = yield* encodeJson({
           artifactIntegrity: selectedArtifact.runtime.artifactIntegrity,
           workspaceRoot: WORKSPACE,
-          label: submission.input.title.slice(0, 200),
+          // The Sprite's own name, so the environment matches the Sprites dashboard.
+          label: resource.name,
         }).pipe(Effect.mapError(() => failure("Invalid sandbox deployment.")));
         yield* exec(
           `set -eu
@@ -204,7 +225,7 @@ test "$(git -C ${WORKSPACE} rev-parse HEAD)" = ${quote(source.commit)}
     const resource = yield* resources.get(submission.input.commandId);
     const body = yield* encodeIntake({
       submission,
-      providerInstances: secrets.providerInstances,
+      providerInstances: withInstalledClaude(secrets.providerInstances),
     }).pipe(Effect.mapError(() => failure("Invalid sandbox intake.")));
     const sprites = yield* client(secrets.credential);
     const output = yield* sprites.exec(

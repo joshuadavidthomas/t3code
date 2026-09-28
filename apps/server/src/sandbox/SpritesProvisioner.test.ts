@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   SandboxSubmissionError,
   ThreadId,
@@ -186,6 +187,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     const deployments: string[] = [];
     const packs: Uint8Array[] = [];
     const seedScripts: string[] = [];
+    const intakes: string[] = [];
     let mismatch = true;
     const client: SpritesClient = {
       find: () => Effect.succeed(null),
@@ -216,6 +218,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
             operations.push("intake");
             controlScripts.push(script);
             expect(input).toContain("Run the tests");
+            intakes.push(input);
             expect(script).not.toContain(captured.credential);
             return encode(destination);
           }
@@ -246,7 +249,16 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     mismatch = false;
     for (const stage of SANDBOX_PROVISION_STAGES.slice(1))
       yield* provisioner.stage(stage, submission, captured);
-    expect(yield* provisioner.intake(submission, captured)).toEqual(destination);
+    const withClaude = {
+      ...captured,
+      providerInstances: {
+        [ProviderInstanceId.make("claude")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { binaryPath: "claude", homePath: "~/.claude" },
+        },
+      },
+    };
+    expect(yield* provisioner.intake(submission, withClaude)).toEqual(destination);
     const resources = yield* SandboxResources.SandboxResources;
     expect((yield* resources.get(submission.input.commandId)).destination).toEqual(destination);
     expect(operations).toEqual(["upload", "upload", "upload", "service", "public", "intake"]);
@@ -255,8 +267,14 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     expect(seedScripts[0]).toContain(`checkout -q -B 'main' '${"a".repeat(40)}'`);
     expect(seedScripts[0]).toContain("remote add origin 'https://github.com/example/repo'");
     expect(controlScripts).toHaveLength(1);
+    // The pinned install wins over the Sprite image's own Claude.
+    expect(intakes[0]).toContain('"binaryPath":"/home/sprite/t3/providers/bin/claude"');
+    expect(intakes[0]).toContain('"homePath":"~/.claude"');
     expect(deployments).toHaveLength(1);
-    expect(deployments[0]).toContain(`"label":${encode(submission.input.title)}`);
+    const { name } = yield* (yield* SandboxResources.SandboxResources).get(
+      submission.input.commandId,
+    );
+    expect(deployments[0]).toContain(`"label":${encode(name)}`);
     expect(controlScripts[0]).toContain("auth session issue");
     expect(controlScripts[0]).toContain("--replace-active");
     expect(controlScripts[0]).toContain("flock 9");

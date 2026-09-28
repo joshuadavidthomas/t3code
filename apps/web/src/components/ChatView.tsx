@@ -8514,11 +8514,19 @@ export default function ChatView(props: ChatViewProps) {
               error: null,
               sequence: 0,
               stages: (
-                ["source", "create", "runtime", "server", "clone", "connect", "agent"] as const
-              ).map((id) => ({
+                [
+                  startFromOrigin ? "fetch" : "source",
+                  "create",
+                  "runtime",
+                  "server",
+                  "clone",
+                  "connect",
+                  "agent",
+                ] as const
+              ).map((id, index) => ({
                 id,
-                status: id === "source" ? "running" : "pending",
-                startedAt: id === "source" ? startedAt : null,
+                status: index === 0 ? "running" : "pending",
+                startedAt: index === 0 ? startedAt : null,
                 endedAt: null,
                 percent: null,
                 detail: null,
