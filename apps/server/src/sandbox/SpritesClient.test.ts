@@ -181,4 +181,14 @@ describe("SpritesClient", () => {
       }
     }),
   );
+
+  it.effect("accepts re-registering a service that is already running, as a retry does", () =>
+    Effect.gen(function* () {
+      const body =
+        '{"message":"Service already running with that command, use POST /v1/services/t3/restart if you want to restart it","name":"t3"}';
+      yield* withClient([new Response(`${body}\n`, { status: 200 })], (client) =>
+        client.putService("sprite", "t3", { cmd: "node", args: ["server.js"] }),
+      );
+    }),
+  );
 });

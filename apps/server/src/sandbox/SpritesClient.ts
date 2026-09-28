@@ -14,6 +14,8 @@ const ServiceEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("error") }),
   Schema.Struct({ type: Schema.Literal("exit"), exit_code: Schema.Int }),
   Schema.Struct({ type: Schema.String }),
+  // A retried setup re-registers the same service, which Sprites answers with this.
+  Schema.Struct({ message: Schema.String.check(Schema.isStartsWith("Service already running")) }),
 ]);
 const decodeExit = Schema.decodeUnknownOption(Schema.fromJsonString(ExitMessage));
 const decodeSpriteJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Sprite));
@@ -236,8 +238,9 @@ export const makeSpritesClient = Effect.fn("SpritesClient.make")(function* (cred
           if (line.trim() === "") return Effect.void;
           return decodeServiceEventJson(line).pipe(
             Effect.flatMap((event) =>
-              event.type === "error" ||
-              (event.type === "exit" && (!("exit_code" in event) || event.exit_code !== 0))
+              "type" in event &&
+              (event.type === "error" ||
+                (event.type === "exit" && (!("exit_code" in event) || event.exit_code !== 0)))
                 ? Effect.fail(unavailable("Sprite service failed to start."))
                 : Effect.void,
             ),

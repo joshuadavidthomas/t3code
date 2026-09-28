@@ -39,6 +39,16 @@ const issueControlSession = `set -eu
 umask 077
 ${ROOT}/runtime/t3 auth session issue --base-dir ${ROOT}/state --subject sandbox-control --ttl 10m --replace-active --json > ${ROOT}/control-session.json`;
 
+// A just-registered server may still be migrating its database, and a control
+// session issued meanwhile can race it, so setup waits until it answers at all.
+const waitForServer = `node -e ${quote(`const http = require('node:http');
+const deadline = Date.now() + 120000;
+const attempt = () => http.get({host:'127.0.0.1',port:8080,path:'/api/sandbox/runtime'}, res => res.resume()).on('error', () => {
+  if (Date.now() > deadline) process.exit(1);
+  setTimeout(attempt, 500);
+});
+attempt();`)}`;
+
 // Exec's stdin carries intake JSON; neither provider credentials nor the control token
 // are placed in command arguments. The control token never leaves the sandbox.
 const request = (path: string, method = "GET") => `set -eu
@@ -244,7 +254,8 @@ test "$(git -C ${WORKSPACE} rev-parse HEAD)" = ${quote(source.commit)}
         dir: WORKSPACE,
         http_port: 8080,
       });
-      const runtime = yield* exec(request("/api/sandbox/runtime")).pipe(
+      const runtime = yield* exec(`${waitForServer}
+${request("/api/sandbox/runtime")}`).pipe(
         Effect.flatMap(decodeRuntime),
         Effect.mapError(() => failure("Sandbox server is not ready.")),
       );
