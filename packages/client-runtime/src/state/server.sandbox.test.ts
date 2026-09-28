@@ -42,6 +42,7 @@ const configuration: SandboxConfiguration = {
   name: "Personal",
   revision: 1,
   credentialConfigured: true,
+  gitHubCredentialConfigured: false,
   namePrefix: "",
   verifiedAt: null,
   providerInstances: {},

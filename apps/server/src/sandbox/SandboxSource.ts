@@ -52,12 +52,15 @@ export const resolveSandboxSource = Effect.fnUntraced(
           fallbackRemoteName: "origin",
         });
     }
+    const authorName = (yield* run("sandbox.authorName", ["config", "user.name"])).stdout.trim();
+    const authorEmail = (yield* run("sandbox.authorEmail", ["config", "user.email"])).stdout.trim();
     return yield* decodeSource({
       repositoryUrl: origin.exitCode === 0 ? withoutCredentials(origin.stdout.trim()) : null,
       branch: name,
       commit: remote?.commitSha ?? resolved.stdout.trim(),
       projectTitle: project.title,
       ...(remote ? { remoteRef: remote.remoteRefName } : {}),
+      ...(authorName && authorEmail ? { author: { name: authorName, email: authorEmail } } : {}),
     });
   },
   Effect.mapError((error) =>

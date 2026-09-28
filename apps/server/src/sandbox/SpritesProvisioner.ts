@@ -21,6 +21,8 @@ import type { SpritesClient } from "./SpritesClient.ts";
 
 const ROOT = "/home/sprite/t3";
 const WORKSPACE = SANDBOX_WORKSPACE_ROOT;
+// T3's GitHub support needs a newer gh than Sprite images ship.
+const GH_VERSION = "2.101.0";
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const failure = (message: string) => new SandboxSubmissionError({ code: "unavailable", message });
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -165,12 +167,35 @@ if [ ! -f ${ROOT}/claude-ready ]; then
   touch ${ROOT}/claude-ready
 fi
 test "$(${ROOT}/providers/bin/claude --version | cut -d ' ' -f 1)" = ${quote(selectedClaude.version)}
+if [ ! -f ${ROOT}/gh-ready ]; then
+  case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
+  release=gh_${GH_VERSION}_linux_$arch
+  cd ${ROOT}
+  curl -fsSL -o $release.tar.gz https://github.com/cli/cli/releases/download/v${GH_VERSION}/$release.tar.gz
+  curl -fsSL https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_checksums.txt | grep " $release.tar.gz$" | sha256sum -c - >/dev/null
+  tar -xzf $release.tar.gz
+  install -m 755 $release/bin/gh ${ROOT}/providers/bin/gh
+  rm -rf $release $release.tar.gz
+  touch ${ROOT}/gh-ready
+fi
+test "$(${ROOT}/providers/bin/gh --version | head -1 | cut -d ' ' -f 3)" = ${GH_VERSION}
 if [ ! -f ${ROOT}/state/userdata/settings.json ]; then
   printf '%s\\n' '{"enableProviderUpdateChecks":false}' > ${ROOT}/state/userdata/settings.json
 fi
 `,
           deployment,
         );
+        // Signed in like any machine: T3's git and gh calls use the ambient login.
+        if (secrets.gitHubCredential)
+          yield* exec(
+            `${ROOT}/providers/bin/gh auth login --hostname github.com --with-token
+${ROOT}/providers/bin/gh auth setup-git --hostname github.com
+git config --global --unset-all url.https://github.com/.insteadOf || true
+git config --global --add url.https://github.com/.insteadOf git@github.com:
+git config --global --add url.https://github.com/.insteadOf ssh://git@github.com/
+`,
+            secrets.gitHubCredential,
+          );
         return;
       }
       if (stage === "clone") {
@@ -191,6 +216,12 @@ ${
   source.repositoryUrl
     ? `git -C ${WORKSPACE} remote set-url origin ${quote(source.repositoryUrl)} 2>/dev/null ||
   git -C ${WORKSPACE} remote add origin ${quote(source.repositoryUrl)}`
+    : ""
+}
+${
+  source.author
+    ? `git config --global user.name ${quote(source.author.name)}
+git config --global user.email ${quote(source.author.email)}`
     : ""
 }
 test "$(git -C ${WORKSPACE} rev-parse HEAD)" = ${quote(source.commit)}

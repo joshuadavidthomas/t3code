@@ -88,6 +88,7 @@ const configuration = (
   name,
   revision,
   credentialConfigured: true,
+  gitHubCredentialConfigured: false,
   namePrefix: "",
   verifiedAt: null,
   providerInstances: {

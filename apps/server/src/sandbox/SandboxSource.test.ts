@@ -54,6 +54,7 @@ it.effect("pins an unpublished local branch without contacting its remote", () =
         branch: "local-only",
         commit: head,
         projectTitle: "App",
+        author: { name: "Test User", email: "test@example.com" },
       },
     );
     const missing = yield* Effect.flip(
@@ -70,7 +71,13 @@ it.effect("starts a local branch from a remote-tracking pick and allows no origi
     yield* git(cwd, ["update-ref", "refs/remotes/upstream/feature", head]);
     expect(
       yield* resolveSandboxSource({ workspaceRoot: cwd, title: "App" }, "upstream/feature"),
-    ).toEqual({ repositoryUrl: null, branch: "feature", commit: head, projectTitle: "App" });
+    ).toEqual({
+      repositoryUrl: null,
+      branch: "feature",
+      commit: head,
+      projectTitle: "App",
+      author: { name: "Test User", email: "test@example.com" },
+    });
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 

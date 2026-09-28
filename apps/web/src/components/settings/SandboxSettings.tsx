@@ -4,7 +4,7 @@ import {
   type SandboxConfiguration,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { EllipsisIcon, PlusIcon } from "lucide-react";
+import { EllipsisIcon, PlusIcon, XIcon } from "lucide-react";
 import { useId, useState } from "react";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { serverEnvironment } from "../../state/server";
@@ -254,6 +254,8 @@ function SpritesConfigurationForm({
   const [name, setName] = useState(configuration?.name ?? "");
   const [namePrefix, setNamePrefix] = useState(configuration?.namePrefix ?? "");
   const [credential, setCredential] = useState("");
+  const [gitHubCredential, setGitHubCredential] = useState("");
+  const [removingGitHub, setRemovingGitHub] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canSubmit = !pending && name.trim().length > 0 && (current !== null || credential.trim());
@@ -270,6 +272,11 @@ function SpritesConfigurationForm({
         expectedRevision: current?.revision ?? 0,
         ...(current ? { id: current.id } : {}),
         ...(credential.trim() ? { credential: credential.trim() } : {}),
+        ...(gitHubCredential.trim()
+          ? { gitHubCredential: gitHubCredential.trim() }
+          : removingGitHub
+            ? { gitHubCredential: null }
+            : {}),
       },
     });
     if (saved._tag === "Failure") {
@@ -279,6 +286,8 @@ function SpritesConfigurationForm({
     }
     setCurrent(saved.value);
     setCredential("");
+    setGitHubCredential("");
+    setRemovingGitHub(false);
     if (saved.value.credentialConfigured) {
       const verified = await verify({
         environmentId,
@@ -332,6 +341,48 @@ function SpritesConfigurationForm({
           }
           onChange={(event) => setCredential(event.target.value)}
         />
+      </label>
+      <label className="block">
+        <span className="mb-1.5 block text-xs font-medium text-foreground">
+          GitHub token (optional)
+        </span>
+        <div className="flex items-center gap-1">
+          <Input
+            type="password"
+            autoComplete="off"
+            value={gitHubCredential}
+            disabled={pending}
+            placeholder={
+              removingGitHub
+                ? "Removed when you save"
+                : current?.gitHubCredentialConfigured
+                  ? "Stored secret, enter a new value to replace"
+                  : "e.g. from gh auth token"
+            }
+            onChange={(event) => {
+              setGitHubCredential(event.target.value);
+              setRemovingGitHub(false);
+            }}
+          />
+          {current?.gitHubCredentialConfigured && !removingGitHub ? (
+            <Button
+              type="button"
+              size="icon-micro"
+              variant="ghost-destructive"
+              disabled={pending}
+              onClick={() => {
+                setGitHubCredential("");
+                setRemovingGitHub(true);
+              }}
+              aria-label="Remove GitHub token"
+            >
+              <XIcon className="size-3" />
+            </Button>
+          ) : null}
+        </div>
+        <span className="mt-1.5 block text-xs text-muted-foreground">
+          Lets sandboxes push and open pull requests as you.
+        </span>
       </label>
       <label className="block">
         <span className="mb-1.5 block text-xs font-medium text-foreground">

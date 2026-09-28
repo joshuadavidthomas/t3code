@@ -24,6 +24,7 @@ it("shares query updates between settings consumers without leaking another owne
     name: "Personal",
     revision: 4,
     credentialConfigured: true,
+    gitHubCredentialConfigured: false,
     namePrefix: "",
     verifiedAt: null,
     providerInstances: {},

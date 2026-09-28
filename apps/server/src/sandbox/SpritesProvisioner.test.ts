@@ -188,6 +188,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     const packs: Uint8Array[] = [];
     const seedScripts: string[] = [];
     const intakes: string[] = [];
+    const signIns: { script: string; input: string }[] = [];
     let mismatch = true;
     const client: SpritesClient = {
       find: () => Effect.succeed(null),
@@ -211,6 +212,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
         Effect.sync(() => {
           if (script.includes("sandbox-runtime.json")) deployments.push(input);
           if (script.includes("index-pack")) seedScripts.push(script);
+          if (script.includes("gh auth login")) signIns.push({ script, input });
           if (script.includes("sandbox-runtime-manifest"))
             return encode(mismatch ? { ...runtime, id: "wrong" } : runtime);
           if (script.includes("/api/sandbox/runtime")) return encode(runtime);
@@ -288,5 +290,20 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     expect(paired.url).toBe("https://sprite.example");
     expect(pairedAgain.pairingToken).not.toBe(paired.pairingToken);
     expect(paired.pairingToken).not.toBe("control-bearer");
+    // Without a GitHub token nothing signs in; with one, only stdin carries it.
+    expect(signIns).toEqual([]);
+    yield* provisioner.stage("server", submission, { ...captured, gitHubCredential: "gh-token" });
+    expect(signIns.map((signIn) => signIn.input)).toEqual(["gh-token"]);
+    expect(signIns[0]!.script).toContain("gh auth setup-git");
+    expect(signIns[0]!.script).not.toContain("gh-token");
+    // Commits made in the sandbox carry the project's Git identity.
+    const author = { name: "Ada Lovelace", email: "ada@example.com" };
+    yield* provisioner.stage(
+      "clone",
+      { ...submission, source: { ...submission.source, author } },
+      captured,
+    );
+    expect(seedScripts[1]).toContain("git config --global user.name 'Ada Lovelace'");
+    expect(seedScripts[1]).toContain("git config --global user.email 'ada@example.com'");
   }).pipe(Effect.scoped, Effect.provide(dependencies)),
 );

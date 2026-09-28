@@ -41,6 +41,7 @@ const CapturedSecrets = Schema.Struct({
   credential: Schema.String,
   namePrefix: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   providerInstances: ProviderInstanceConfigMap,
+  gitHubCredential: Schema.optionalKey(Schema.String),
 });
 export type SandboxCapturedSecrets = typeof CapturedSecrets.Type;
 export const SANDBOX_PROVISION_STAGES = [
@@ -509,6 +510,7 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
           credential: capture.credential,
           namePrefix: capture.configuration.namePrefix,
           providerInstances: capture.providerInstances,
+          ...(capture.gitHubCredential ? { gitHubCredential: capture.gitHubCredential } : {}),
         }).pipe(Effect.mapError(storageFailure));
         const body = yield* encode(value).pipe(Effect.mapError(storageFailure));
         yield* Effect.uninterruptible(
