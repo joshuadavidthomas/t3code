@@ -21,6 +21,8 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
+import { orchestrationEnvironment } from "../state/orchestration";
+import { isSandboxWorkSaved, useSandboxCleanup } from "../components/useSandbox";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
@@ -235,6 +237,10 @@ export function useThreadActions() {
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
+  const readArchivedShells = useAtomCommand(orchestrationEnvironment.readArchivedShellSnapshot, {
+    reportFailure: false,
+  });
+  const { findLaunch: findSandboxLaunch, deleteSandbox } = useSandboxCleanup();
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
@@ -396,11 +402,63 @@ export function useThreadActions() {
         survivingThreads,
         threadRef.threadId,
       );
+      const localApi = readLocalApi();
       const displayWorktreePath = orphanedWorktreePath
         ? formatWorktreePathForDisplay(orphanedWorktreePath)
         : null;
-      const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== null;
-      const localApi = readLocalApi();
+      // A sandbox is a worktree on another machine, offered back the same way.
+      // Deleting it also deletes any work it hasn't pushed.
+      const sandbox =
+        threadProject && !survivingThreads.some((entry) => entry.id !== threadRef.threadId)
+          ? await findSandboxLaunch(threadRef.environmentId)
+          : null;
+      let shouldDeleteSandbox = false;
+      if (sandbox && threadProject) {
+        const archived = await readArchivedShells({
+          environmentId: threadRef.environmentId,
+          input: {},
+        });
+        const onlyThread =
+          archived._tag === "Success" &&
+          archived.value.threads.every((entry) => entry.id === threadRef.threadId);
+        if (onlyThread) {
+          const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
+          // The host pays for the sandbox, so its cleanup rule applies.
+          const ownerSettings = serverConfigs.get(sandbox.ownerEnvironmentId)?.settings;
+          const automatic = ownerSettings
+            ? resolveWorktreeCleanup(ownerSettings, sandbox.submission.input.projectId)
+                .worktreeOnDelete
+            : false;
+          const status = automatic
+            ? await refreshVcsStatus({
+                environmentId: threadRef.environmentId,
+                input: { cwd: thread.worktreePath ?? threadProject.workspaceRoot },
+              })
+            : null;
+          if (status?._tag === "Success" && isSandboxWorkSaved(status.value)) {
+            shouldDeleteSandbox = true;
+          } else if (localApi) {
+            const confirmationResult = await settlePromise(() =>
+              localApi.dialogs.confirm(
+                [
+                  "This thread is the only one in this sandbox:",
+                  serverConfigs.get(threadRef.environmentId)?.environment.label ??
+                    sandbox.submission.input.title,
+                  "",
+                  "Delete the sandbox too? Its files and any unpushed commits are deleted.",
+                ].join("\n"),
+                { variant: "destructive" },
+              ),
+            );
+            if (confirmationResult._tag === "Failure") {
+              return confirmationResult;
+            }
+            shouldDeleteSandbox = confirmationResult.value;
+          }
+        }
+      }
+      const canDeleteWorktree =
+        orphanedWorktreePath !== null && threadProject !== null && !shouldDeleteSandbox;
       let shouldDeleteWorktree = false;
       const environmentSettings = appAtomRegistry
         .get(environmentServerConfigsAtom)
@@ -482,6 +540,24 @@ export function useThreadActions() {
         );
       }
 
+      if (sandbox && shouldDeleteSandbox) {
+        const error = await deleteSandbox(
+          sandbox.ownerEnvironmentId,
+          sandbox.submission.input.commandId,
+        );
+        if (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to delete sandbox",
+              description: `${error} Delete it from Settings → Connections.`,
+            }),
+          );
+        }
+        // Like a worktree cleanup failure, this doesn't make the thread deletion fail.
+        return deleteResult;
+      }
+
       if (!shouldDeleteWorktree || !orphanedWorktreePath || !threadProject) {
         return deleteResult;
       }
@@ -538,8 +614,11 @@ export function useThreadActions() {
       clearProjectDraftThreadById,
       clearTerminalUiState,
       closeTerminal,
+      deleteSandbox,
       deleteThreadMutation,
+      findSandboxLaunch,
       getCurrentRouteThreadRef,
+      readArchivedShells,
       refreshVcsStatus,
       removeWorktree,
       router,

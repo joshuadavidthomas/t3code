@@ -10,8 +10,11 @@ import {
 import { EllipsisIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { SANDBOX_PAIRING_SCOPE_MESSAGE, useConnectSandboxDestination } from "../useSandbox";
-import { environmentCatalog } from "~/connection/catalog";
+import {
+  SANDBOX_PAIRING_SCOPE_MESSAGE,
+  useConnectSandboxDestination,
+  useSandboxCleanup,
+} from "../useSandbox";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { isElectron } from "~/env";
 import { usePrimarySessionState } from "~/environments/primary";
@@ -100,10 +103,7 @@ function SandboxOwnerResources({
   const cancel = useAtomCommand(serverEnvironment.cancelSandboxSubmission, {
     reportFailure: false,
   });
-  const remove = useAtomCommand(serverEnvironment.deleteSandboxSubmission, {
-    reportFailure: false,
-  });
-  const setEnabled = useAtomCommand(environmentCatalog.setEnabled);
+  const { deleteSandbox } = useSandboxCleanup();
   const [pending, setPending] = useState<{ commandId: string; action: string } | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -115,7 +115,7 @@ function SandboxOwnerResources({
     if (
       action === "delete" &&
       (await requestConfirmDialog(
-        `Delete ${submission.input.title}?\nThis permanently deletes the sandbox and its files, including any running work.`,
+        `Delete ${submission.input.title}?\nThis permanently deletes the sandbox, its files and its threads, including any running work.`,
         { variant: "destructive" },
       )) !== true
     )
@@ -134,26 +134,13 @@ function SandboxOwnerResources({
       setPending(null);
       return;
     } else if (action === "delete") {
-      const removed = await remove({
-        environmentId: environment.environmentId,
-        input: { commandId },
-      });
-      result = removed;
-      const deletionError = removed._tag === "Success" ? removed.value.deletionError : null;
-      if (deletionError) setErrors((current) => ({ ...current, [commandId]: deletionError }));
-      if (
-        removed._tag === "Success" &&
-        removed.value.deletedAt &&
-        submission.destination &&
-        environments.some((entry) => entry.environmentId === submission.destination?.environmentId)
-      ) {
-        result = await setEnabled({
-          environmentId: submission.destination.environmentId,
-          enabled: false,
-        });
-      }
+      const error = await deleteSandbox(environment.environmentId, commandId);
+      if (error) setErrors((current) => ({ ...current, [commandId]: error }));
+      submissions.refresh();
+      setPending(null);
+      return;
     } else {
-      const command = action === "retry" ? retry : action === "cancel" ? cancel : remove;
+      const command = action === "retry" ? retry : cancel;
       result = await command({ environmentId: environment.environmentId, input: { commandId } });
     }
     if (result._tag === "Failure")

@@ -12,8 +12,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 const state = vi.hoisted(() => ({
   environments: [] as unknown[],
   submissions: [] as unknown[],
-  remove: vi.fn(),
-  enable: vi.fn(),
+  deleteSandbox: vi.fn(),
   confirm: vi.fn(),
 }));
 vi.mock("~/state/environments", () => ({
@@ -32,18 +31,14 @@ vi.mock("~/state/server", () => ({
   serverEnvironment: {
     sandboxSubmissions: () => null,
     sandboxConfiguration: () => null,
-    deleteSandboxSubmission: "remove",
   },
 }));
-vi.mock("~/connection/catalog", () => ({ environmentCatalog: { setEnabled: "enable" } }));
-vi.mock("~/connection/onboarding", () => ({
-  connectPairing: "connect",
-  awaitEnvironmentConnection: "await",
+vi.mock("../useSandbox", () => ({
+  SANDBOX_PAIRING_SCOPE_MESSAGE: "",
+  useConnectSandboxDestination: () => vi.fn(),
+  useSandboxCleanup: () => ({ deleteSandbox: state.deleteSandbox }),
 }));
-vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (command: string) =>
-    command === "remove" ? state.remove : command === "enable" ? state.enable : vi.fn(),
-}));
+vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/confirmDialog", () => ({ requestConfirmDialog: state.confirm }));
 vi.mock("../ui/menu", () => ({
   Menu: ({ children }: { children: ReactNode }) => children,
@@ -107,7 +102,7 @@ describe("sandbox resource actions", () => {
     );
   });
 
-  it("keeps registered destinations on ordinary connection controls and confirms cleanup before disabling them", async () => {
+  it("confirms before deleting a sandbox and keeps a failed deletion visible", async () => {
     const destinationId = EnvironmentId.make("destination");
     const submission = {
       input: {
@@ -131,19 +126,8 @@ describe("sandbox resource actions", () => {
       },
       { environmentId: destinationId, connection: { phase: "disconnected" } },
     ];
-    state.remove.mockReset();
-    state.enable.mockReset();
     state.confirm.mockResolvedValueOnce(false).mockResolvedValue(true);
-    state.remove
-      .mockResolvedValueOnce({
-        _tag: "Success",
-        value: { ...submission, deletionError: "Provider unavailable" },
-      })
-      .mockResolvedValueOnce({
-        _tag: "Success",
-        value: { ...submission, deletedAt: "2026-09-27T00:00:00.000Z" },
-      });
-    state.enable.mockResolvedValue({ _tag: "Success" });
+    state.deleteSandbox.mockResolvedValueOnce("Provider unavailable").mockResolvedValueOnce(null);
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(<SandboxResourceRows onResourcesChange={() => {}} />);
@@ -156,11 +140,10 @@ describe("sandbox resource actions", () => {
       await act(async () => {
         remove();
       });
-      expect(state.remove).not.toHaveBeenCalled();
+      expect(state.deleteSandbox).not.toHaveBeenCalled();
       await act(async () => {
         remove();
       });
-      expect(state.enable).not.toHaveBeenCalled();
       expect(
         renderer.root
           .findAllByType("span")
@@ -169,11 +152,8 @@ describe("sandbox resource actions", () => {
       await act(async () => {
         remove();
       });
-      expect(state.remove).toHaveBeenCalledTimes(2);
-      expect(state.enable).toHaveBeenCalledExactlyOnceWith({
-        environmentId: destinationId,
-        enabled: false,
-      });
+      expect(state.deleteSandbox).toHaveBeenCalledTimes(2);
+      expect(state.deleteSandbox).toHaveBeenLastCalledWith("owner", "submission");
     } finally {
       await act(async () => {
         renderer.unmount();

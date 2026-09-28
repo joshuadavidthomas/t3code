@@ -1,12 +1,14 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentAuthorizationError,
+  SandboxSubmissionError,
   type CommandId,
   type EnvironmentId,
   type SandboxDestination,
   type SandboxSubmission,
   type SandboxSubmissionUpdate,
   type SandboxSubmitInput,
+  type VcsStatusResult,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { createElement, useCallback, useEffect, useRef } from "react";
@@ -21,7 +23,9 @@ import {
   DraftId,
   type SandboxDraftSetup,
 } from "../composerDraftStore";
-import { serverEnvironment } from "../state/server";
+import { environmentCatalog } from "../connection/catalog";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentServerConfigsAtom, serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useEnvironmentQuery } from "../state/query";
 import {
@@ -30,7 +34,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { newThreadId } from "../lib/utils";
 import { useThreadDetail, useThreadShell } from "../state/entities";
+import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { threadHasStarted } from "./ChatView.logic";
+import { isDraftDiscardLocked } from "./Sidebar.logic";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 
 function applySubmission(
   draftId: DraftId,
@@ -176,9 +183,111 @@ export function useSandboxSubmission(draftId: DraftId | null, setup: SandboxDraf
   };
 }
 
+/** Whether deleting the sandbox would lose nothing: like automatic worktree cleanup,
+ * it needs a clean tree, and unlike a worktree, every commit pushed as well. */
+export function isSandboxWorkSaved(
+  status: Pick<VcsStatusResult, "hasWorkingTreeChanges" | "hasUpstream" | "aheadCount">,
+) {
+  return !status.hasWorkingTreeChanges && status.hasUpstream && status.aheadCount === 0;
+}
+
+export type SandboxLaunch = {
+  readonly ownerEnvironmentId: EnvironmentId;
+  readonly submission: SandboxSubmission;
+};
+
+/** Finds and deletes sandboxes the way a thread deletes its worktree. Only the
+ * host that launched a sandbox holds its account, so it does the deleting. */
+export function useSandboxCleanup() {
+  const list = useAtomCommand(serverEnvironment.listSandboxSubmissions, { reportFailure: false });
+  const remove = useAtomCommand(serverEnvironment.deleteSandboxSubmission, {
+    reportFailure: false,
+  });
+  const forget = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
+
+  /** The launch behind a sandbox environment, on whichever connected host made it. */
+  const findLaunch = useCallback(
+    async (environmentId: EnvironmentId): Promise<SandboxLaunch | null> => {
+      const configs = appAtomRegistry.get(environmentServerConfigsAtom);
+      if (configs.get(environmentId)?.environment.platform.machine !== "cloud") return null;
+      for (const [ownerEnvironmentId, config] of configs) {
+        if (config.environment.capabilities.sandboxConfiguration !== true) continue;
+        const listed = await list({ environmentId: ownerEnvironmentId, input: {} });
+        const submission =
+          listed._tag === "Success"
+            ? listed.value.find(
+                (candidate) =>
+                  candidate.deletedAt === null &&
+                  candidate.destination?.environmentId === environmentId,
+              )
+            : undefined;
+        if (submission) return { ownerEnvironmentId, submission };
+      }
+      return null;
+    },
+    [list],
+  );
+
+  /** Deletes the sandbox, then forgets its environment, which has nothing left to reconnect to.
+   * Returns why it couldn't, or null. */
+  const deleteSandbox = useCallback(
+    async (ownerEnvironmentId: EnvironmentId, commandId: CommandId): Promise<string | null> => {
+      const removed = await remove({ environmentId: ownerEnvironmentId, input: { commandId } });
+      if (removed._tag === "Failure") {
+        const failure = squashAtomCommandFailure(removed);
+        // Deletion reports "invalid" only for a launch the host never stored.
+        if (isSubmissionError(failure) && failure.code === "invalid") return null;
+        return failure instanceof Error ? failure.message : "Couldn't delete the sandbox.";
+      }
+      if (removed.value.deletionError) return removed.value.deletionError;
+      const destination = removed.value.destination?.environmentId;
+      if (
+        destination &&
+        appAtomRegistry.get(environmentCatalog.catalogValueAtom).entries.has(destination)
+      ) {
+        const forgotten = await forget(destination);
+        if (forgotten._tag === "Failure")
+          return "The sandbox was deleted, but its connection couldn't be removed.";
+      }
+      return null;
+    },
+    [forget, remove],
+  );
+
+  return { findLaunch, deleteSandbox };
+}
+
+/** Discards a draft. A launch that never reached its thread goes with it, as Cancel does. */
+export function useDiscardDraftThread() {
+  const { deleteSandbox } = useSandboxCleanup();
+  const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
+  return useCallback(
+    (draftId: DraftId) => {
+      const setup = useComposerDraftStore.getState().getDraftSession(draftId)?.sandboxSetup;
+      if (isDraftDiscardLocked(setup)) return;
+      releaseComposerDraftUploads(draftId);
+      clearDraftThread(draftId);
+      const owner = setup?.submission?.ownerEnvironmentId;
+      if (!owner || !setup?.submission || setup.snapshot.phase === "cancelled") return;
+      void deleteSandbox(owner, setup.submission.commandId).then((error) => {
+        if (error)
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Couldn't delete the sandbox",
+              description: `${error} Delete it from Settings → Connections.`,
+            }),
+          );
+      });
+    },
+    [clearDraftThread, deleteSandbox],
+  );
+}
+
 export const SANDBOX_PAIRING_SCOPE_MESSAGE =
   "Connecting requires the access:write scope for this backend.";
 const isAuthorizationError = Schema.is(EnvironmentAuthorizationError);
+const isSubmissionError = Schema.is(SandboxSubmissionError);
 
 /** Pairs to a finished sandbox and waits for its connection, stopping early once `isCurrent` fails. */
 export function useConnectSandboxDestination() {

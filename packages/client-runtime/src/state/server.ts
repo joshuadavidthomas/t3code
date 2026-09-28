@@ -1192,6 +1192,10 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.sandboxPairDestination,
     }),
     sandboxSubmissions,
+    listSandboxSubmissions: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:list-sandbox-submissions",
+      tag: WS_METHODS.sandboxListSubmissions,
+    }),
     submitSandbox: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:submit-sandbox",
       tag: WS_METHODS.sandboxSubmit,

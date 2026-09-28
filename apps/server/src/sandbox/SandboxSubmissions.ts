@@ -106,6 +106,7 @@ export const toSandboxSubmission = (value: SandboxSubmissionRecord): SandboxSubm
     commandId: value.input.commandId,
     title: value.input.title,
     configurationId: value.input.configurationId,
+    projectId: value.input.projectId,
   },
   progress: value.progress,
   destination: value.destination,

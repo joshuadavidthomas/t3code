@@ -772,6 +772,7 @@ it.effect("streams an initial list snapshot, additions, compact progress, and re
       commandId: input.commandId,
       title: input.title,
       configurationId: input.configurationId,
+      projectId: input.projectId,
     });
     expect("runtime" in snapshot.submissions[0]!).toBe(false);
     expect("source" in snapshot.submissions[0]!).toBe(false);
@@ -789,6 +790,7 @@ it.effect("streams an initial list snapshot, additions, compact progress, and re
       commandId: second.commandId,
       title: second.title,
       configurationId: second.configurationId,
+      projectId: second.projectId,
     });
     expect("runtime" in added).toBe(false);
     yield* Deferred.await(createEntered);

@@ -24,8 +24,14 @@ you give it access.
 This first version supports Claude, and the initial message must be text only.
 Mobile can continue a paired sandbox thread; creation is on web and desktop.
 
-Manage running sandboxes under **Settings → Connections**. **Connect** opens an
-existing sandbox connection; **Delete sandbox** removes the workspace. Removing
+An idle sandbox sleeps but keeps its files, which your provider may charge to
+store. Like a worktree, it stays when you settle or archive its thread. Deleting
+the last thread in a sandbox offers to delete the sandbox too; with **Delete
+worktrees with deleted threads** on, it's deleted without asking once all its
+work is pushed. Discarding a failed launch deletes its sandbox.
+
+Manage sandboxes under **Settings → Connections**. **Connect** opens an
+existing sandbox; **Delete sandbox** removes it along with its threads. Removing
 an account or disconnecting an environment does not delete its sandboxes.
 
 ## T3 Connect

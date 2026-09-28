@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
   shell: null as object | null,
   detail: null as object | null,
   commands: new Map<string, ReturnType<typeof vi.fn>>(),
+  saved: new Map<string, unknown>(),
+  toast: vi.fn(),
   refresh: vi.fn(),
 }));
 vi.mock("../connection/onboarding", () => ({
@@ -35,7 +37,22 @@ vi.mock("../state/server", () => ({
     retrySandboxSubmission: "retry",
     cancelSandboxSubmission: "cancel",
     pairSandboxDestination: "pair",
+    deleteSandboxSubmission: "delete",
+    listSandboxSubmissions: "list",
   },
+  environmentServerConfigsAtom: "configs",
+}));
+vi.mock("../connection/catalog", () => ({
+  environmentCatalog: { remove: "forget", catalogValueAtom: "catalog" },
+}));
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: {
+    get: (atom: string) => (atom === "catalog" ? { entries: state.saved } : new Map()),
+  },
+}));
+vi.mock("./ui/toast", () => ({
+  toastManager: { add: state.toast },
+  stackedThreadToast: (toast: unknown) => toast,
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: string) => state.commands.get(command),
@@ -63,6 +80,7 @@ import {
 import {
   SandboxSubmissionCoordinator,
   sandboxSubmitRejection,
+  useDiscardDraftThread,
   useSandboxSubmission,
 } from "./useSandbox";
 
@@ -132,7 +150,18 @@ beforeEach(() => {
   state.shell = null;
   state.detail = null;
   state.commands.clear();
-  for (const command of ["submit", "retry", "cancel", "pair", "connect", "await"])
+  state.saved = new Map();
+  state.toast.mockReset();
+  for (const command of [
+    "submit",
+    "retry",
+    "cancel",
+    "pair",
+    "connect",
+    "await",
+    "delete",
+    "forget",
+  ])
     state.commands.set(command, vi.fn());
   useComposerDraftStore.setState({
     draftsByThreadKey: {},
@@ -470,4 +499,69 @@ it("hands a refused launch back with the server's reason and keeps an unconfirme
   } finally {
     await mounted.close();
   }
+});
+
+async function discard(value: SandboxDraftSetup) {
+  seed({
+    ...value,
+    submission: { ...value.submission!, ownerEnvironmentId: EnvironmentId.make("owner") },
+  });
+  let run!: ReturnType<typeof useDiscardDraftThread>;
+  function Probe() {
+    run = useDiscardDraftThread();
+    return null;
+  }
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(<Probe />);
+  });
+  await act(async () => {
+    run(draftId);
+  });
+  await act(async () => renderer.unmount());
+}
+
+it("deletes a discarded launch's sandbox and forgets its connection", async () => {
+  const destination = completed().destination!;
+  state.saved.set(destination.environmentId, {});
+  state.commands.get("delete")!.mockResolvedValue({
+    _tag: "Success",
+    value: { destination, deletionError: null, deletedAt: "2026-09-28T00:00:00.000Z" },
+  });
+  state.commands.get("forget")!.mockResolvedValue({ _tag: "Success" });
+  await discard(setup("failed"));
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBeNull();
+  expect(state.commands.get("delete")).toHaveBeenCalledExactlyOnceWith({
+    environmentId: "owner",
+    input: { commandId: setup().submission!.commandId },
+  });
+  expect(state.commands.get("forget")).toHaveBeenCalledExactlyOnceWith(destination.environmentId);
+  expect(state.toast).not.toHaveBeenCalled();
+});
+
+it("discards quietly when the host never stored the launch or already deleted it", async () => {
+  state.commands.get("delete")!.mockResolvedValue(
+    AsyncResult.failure(
+      Cause.fail(
+        new SandboxSubmissionError({
+          code: "invalid",
+          message: "Sandbox submission does not exist.",
+        }),
+      ),
+    ),
+  );
+  await discard(setup("failed"));
+  expect(state.toast).not.toHaveBeenCalled();
+  expect(state.commands.get("forget")).not.toHaveBeenCalled();
+  await discard(setup("cancelled"));
+  expect(state.commands.get("delete")).toHaveBeenCalledTimes(1);
+});
+
+it("tells the user when a discarded launch's sandbox couldn't be deleted", async () => {
+  state.commands.get("delete")!.mockResolvedValue({
+    _tag: "Success",
+    value: { destination: null, deletionError: "Provider unavailable", deletedAt: null },
+  });
+  await discard(setup("failed"));
+  expect(state.toast).toHaveBeenCalledOnce();
 });

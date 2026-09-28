@@ -112,6 +112,8 @@ export const SandboxSubmission = Schema.Struct({
     commandId: CommandId,
     title: TrimmedNonEmptyString,
     configurationId: Schema.String.check(Schema.isUUID(4)),
+    /** The host project it launched from, whose worktree cleanup rules it follows. */
+    projectId: ProjectId,
   }),
   progress: WorktreeSetupSnapshot,
   destination: Schema.NullOr(SandboxDestination),

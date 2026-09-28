@@ -106,7 +106,6 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
-import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { isDraftDiscardLocked } from "./Sidebar.logic";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
@@ -231,7 +230,7 @@ import {
   foldSubagentActivities,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
-import { sandboxSubmitRejection, useSandboxSubmission } from "./useSandbox";
+import { sandboxSubmitRejection, useDiscardDraftThread, useSandboxSubmission } from "./useSandbox";
 import { resolveSandboxProviderEntry, useSandboxComposer } from "./chat/useSandboxComposer";
 import { selectSandboxProviderTarget } from "./settings/settingsScopeNavigation";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -1581,6 +1580,7 @@ export default function ChatView(props: ChatViewProps) {
   const sandboxComposer = useSandboxComposer(sandboxTarget, routeKind === "draft");
   const sandboxSetup = draftThread?.sandboxSetup ?? null;
   const sandboxSubmission = useSandboxSubmission(draftId, sandboxSetup);
+  const discardDraftThread = useDiscardDraftThread();
   const serverThread = useThread(routeThreadRef, { waitForShell: draftThread !== null });
   const loadingServerThread = useMemo(
     () =>
@@ -1668,7 +1668,6 @@ export default function ChatView(props: ChatViewProps) {
   );
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
-  const clearDraftThread = useComposerDraftStore((store) => store.clearDraftThread);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
     (store) => store.getDraftSessionByLogicalProjectKey,
   );
@@ -10180,10 +10179,7 @@ export default function ChatView(props: ChatViewProps) {
                 {...(draftId && sandboxSetup && !isDraftDiscardLocked(sandboxSetup)
                   ? {
                       // Same as the sidebar's discard; the draft route redirects home once it's gone.
-                      onDiscardWorktreeSetup: () => {
-                        releaseComposerDraftUploads(draftId);
-                        clearDraftThread(draftId);
-                      },
+                      onDiscardWorktreeSetup: () => discardDraftThread(draftId),
                     }
                   : {})}
                 {...(draftId && !sandboxSetup ? { onWorktreeSetupWorkLocally } : {})}
