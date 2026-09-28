@@ -92,7 +92,11 @@ const decodeSource = Schema.decodeUnknownEffect(SandboxPinnedSource);
 const decodeDestination = Schema.decodeUnknownEffect(SandboxDestination);
 /** The client view of a record; see the SandboxSubmission contract. */
 export const toSandboxSubmission = (value: SandboxSubmissionRecord): SandboxSubmission => ({
-  input: { commandId: value.input.commandId, title: value.input.title },
+  input: {
+    commandId: value.input.commandId,
+    title: value.input.title,
+    configurationId: value.input.configurationId,
+  },
   progress: value.progress,
   destination: value.destination,
   intakeStarted: value.intakeStarted,

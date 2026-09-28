@@ -110,10 +110,7 @@ export const makeSandboxConfiguration = Effect.fnUntraced(function* (
           name: decoded.name,
           ...(decoded.namePrefix !== undefined ? { namePrefix: decoded.namePrefix } : {}),
           revision: decoded.expectedRevision + 1,
-          credentialConfigured:
-            decoded.credential === undefined
-              ? Option.isSome(previous)
-              : decoded.credential !== null,
+          credentialConfigured: decoded.credential !== undefined || Option.isSome(previous),
           verifiedAt: null,
         };
         const nextValues = current
@@ -124,9 +121,7 @@ export const makeSandboxConfiguration = Effect.fnUntraced(function* (
             const write = yield* Effect.exit(
               Effect.gen(function* () {
                 if (decoded.credential !== undefined) {
-                  yield* decoded.credential === null
-                    ? secrets.remove(key)
-                    : secrets.set(key, new TextEncoder().encode(decoded.credential));
+                  yield* secrets.set(key, new TextEncoder().encode(decoded.credential));
                 }
                 yield* persist(nextValues);
               }),

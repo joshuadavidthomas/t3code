@@ -1,12 +1,11 @@
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
-import { ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ProviderInstanceConfig,
   ProviderInstanceConfigMap,
   ProviderInstanceId,
 } from "./providerInstance.ts";
-import { ServerProviderModel } from "./server.ts";
 
 const Text = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512));
 const Revision = Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
@@ -36,6 +35,12 @@ export const SandboxConfiguration = Schema.Struct({
   ),
 });
 export type SandboxConfiguration = typeof SandboxConfiguration.Type;
+
+/** Display names for sandbox providers, shared by every client surface. */
+export const SANDBOX_PROVIDER_LABELS: Record<SandboxConfiguration["provider"], string> = {
+  sprites: "Sprites",
+};
+
 export const SandboxConfigurationSaveInput = Schema.Struct({
   id: Schema.optionalKey(Schema.String.check(Schema.isUUID(4))),
   provider: Schema.Literal("sprites"),
@@ -43,9 +48,9 @@ export const SandboxConfigurationSaveInput = Schema.Struct({
   expectedRevision: Revision,
   // Omitted preserves the saved prefix.
   namePrefix: Schema.optionalKey(SandboxNamePrefix),
-  // Omitted preserves the credential; null clears it; a string replaces it.
+  // Omitted preserves the credential; a string replaces it.
   credential: Schema.optionalKey(
-    Schema.NullOr(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096))),
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
   ),
 });
 export type SandboxConfigurationSaveInput = typeof SandboxConfigurationSaveInput.Type;

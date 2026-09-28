@@ -73,13 +73,14 @@ import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import {
   EnvironmentRow,
   environmentTransportLabel,
+  formatAccessTimestamp,
   formatDesktopSshTarget,
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import {
-  SANDBOX_PROVIDER_LABELS,
+  EditSandboxConfigurationDialog,
   SandboxConfigurationForm,
   SandboxRegistrationRow,
   useSandboxConfiguration,
@@ -200,19 +201,6 @@ const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 // neither can collide with a real distro name.
 const BACKEND_VALUE_DEFAULT_WSL = "backend:default-wsl";
 const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
-
-const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-function formatAccessTimestamp(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return accessTimestampFormatter.format(parsed);
-}
 
 const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
   readonly scope: AuthEnvironmentScope;
@@ -2037,9 +2025,6 @@ export function ConnectionsSettings() {
     sandboxHost.configurations.find(
       (configuration) => configuration.id === selectedSandboxConfigurationId,
     ) ?? null;
-  const selectedSandboxProviderLabel = selectedSandboxConfiguration
-    ? SANDBOX_PROVIDER_LABELS[selectedSandboxConfiguration.provider]
-    : null;
   const savedBackendMode =
     selectedBackendMode === "sandbox" && !sandboxAvailable ? "remote" : selectedBackendMode;
   const primaryVersionMismatch = resolveServerConfigVersionMismatch(primaryServerConfig);
@@ -3760,11 +3745,7 @@ export function ConnectionsSettings() {
               <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
                 <DialogHeader>
                   <DialogTitle>Add Environment</DialogTitle>
-                  <DialogDescription>
-                    {savedBackendMode === "sandbox"
-                      ? "Connect a sandbox provider."
-                      : "Pair another environment to this client."}
-                  </DialogDescription>
+                  <DialogDescription>Pair another environment to this client.</DialogDescription>
                 </DialogHeader>
                 <DialogPanel>
                   <div className="space-y-4">
@@ -3793,7 +3774,7 @@ export function ConnectionsSettings() {
                         ? renderConnectionModeCard({
                             mode: "sandbox",
                             title: "Sandbox",
-                            description: "Use for on-demand workspaces.",
+                            description: "Connect a sandbox account for on-demand threads.",
                             icon: <CloudIcon aria-hidden className="size-4" />,
                           })
                         : null}
@@ -3801,14 +3782,15 @@ export function ConnectionsSettings() {
                     <AnimatedHeight>
                       {savedBackendMode === "sandbox" && primaryEnvironmentId ? (
                         sandboxHost.loading ? (
-                          <p>Loading…</p>
+                          <p className="text-xs text-muted-foreground">Loading…</p>
                         ) : sandboxHost.error ? (
-                          <p role="alert">{sandboxHost.error}</p>
+                          <p role="alert" className="text-xs text-destructive">
+                            {sandboxHost.error}
+                          </p>
                         ) : (
                           <SandboxConfigurationForm
                             key={primaryEnvironmentId}
                             environmentId={primaryEnvironmentId}
-                            configuration={null}
                             onSaved={() => {
                               setAddBackendDialogOpen(false);
                             }}
@@ -3848,14 +3830,21 @@ export function ConnectionsSettings() {
         {sandboxAvailable && (sandboxHost.configurations.length > 0 || sandboxHost.error) ? (
           <>
             {sandboxHost.error ? (
-              <div role="alert" className="flex items-center justify-between gap-3 px-4 py-3">
-                <p className="text-xs text-destructive">
-                  Could not load sandbox providers: {sandboxHost.error}
-                </p>
-                <Button size="sm" variant="outline" onClick={sandboxHost.reload}>
-                  Retry
-                </Button>
-              </div>
+              <SettingsRow
+                title="Sandbox accounts"
+                description="Couldn't load sandbox accounts."
+                status={<span className="block text-destructive">{sandboxHost.error}</span>}
+                control={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={sandboxHost.reload}
+                    disabled={sandboxHost.refreshing}
+                  >
+                    {sandboxHost.refreshing ? "Retrying…" : "Retry"}
+                  </Button>
+                }
+              />
             ) : null}
             {primaryEnvironmentId ? (
               <>
@@ -3867,31 +3856,11 @@ export function ConnectionsSettings() {
                     onEdit={() => setSelectedSandboxConfigurationId(configuration.id)}
                   />
                 ))}
-                <Dialog
-                  open={selectedSandboxConfiguration !== null}
-                  onOpenChange={(open) => {
-                    if (!open) setSelectedSandboxConfigurationId(null);
-                  }}
-                >
-                  <DialogPopup>
-                    <DialogHeader>
-                      <DialogTitle>Edit {selectedSandboxProviderLabel}</DialogTitle>
-                      <DialogDescription>
-                        Update your {selectedSandboxProviderLabel} connection.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <DialogPanel>
-                      {selectedSandboxConfiguration ? (
-                        <SandboxConfigurationForm
-                          key={selectedSandboxConfiguration.id}
-                          environmentId={primaryEnvironmentId}
-                          configuration={selectedSandboxConfiguration}
-                          onSaved={() => setSelectedSandboxConfigurationId(null)}
-                        />
-                      ) : null}
-                    </DialogPanel>
-                  </DialogPopup>
-                </Dialog>
+                <EditSandboxConfigurationDialog
+                  environmentId={primaryEnvironmentId}
+                  configuration={selectedSandboxConfiguration}
+                  onClose={() => setSelectedSandboxConfigurationId(null)}
+                />
               </>
             ) : null}
           </>

@@ -20,6 +20,7 @@ export interface SandboxOption {
   ownerEnvironmentId: EnvironmentId;
   configurationId: string;
   label: string;
+  providerLabel: string;
 }
 
 export interface SandboxTarget {
@@ -95,8 +96,11 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
       ? "auto"
       : environmentId;
   const selectedLabel = sandboxTarget
-    ? (activeSandbox?.label ?? "Unavailable environment")
+    ? (activeSandbox?.label ?? "Unavailable")
     : (autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on");
+  const tooltipLabel = activeSandbox
+    ? `${activeSandbox.label} · ${activeSandbox.providerLabel}`
+    : selectedLabel;
 
   // The static label carries the xs control's height (h-7 sm:h-6) as well as
   // its padding: the composer context strip has no min-height of its own, and
@@ -131,7 +135,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             </span>
           </span>
         </TooltipTrigger>
-        <TooltipPopup>{selectedLabel}</TooltipPopup>
+        <TooltipPopup>{tooltipLabel}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -183,7 +187,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             </span>
           </span>
         </TooltipTrigger>
-        <TooltipPopup>{selectedLabel}</TooltipPopup>
+        <TooltipPopup>{tooltipLabel}</TooltipPopup>
       </Tooltip>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
@@ -211,9 +215,12 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           ))}
           {sandboxOptions.map((option) => (
             <SelectItem key={sandboxValue(option)} value={sandboxValue(option)}>
-              <span className="inline-flex items-center gap-1.5">
-                <CloudIcon className="size-3" aria-hidden="true" />
-                {option.label}
+              <span className="flex w-full items-center justify-between gap-5">
+                <span className="inline-flex items-center gap-1.5">
+                  <CloudIcon className="size-3" aria-hidden="true" />
+                  {option.label}
+                </span>
+                <span className="text-xs text-muted-foreground">{option.providerLabel}</span>
               </span>
             </SelectItem>
           ))}

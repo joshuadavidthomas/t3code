@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const state = vi.hoisted(() => ({
   save: vi.fn(),
   reload: vi.fn(),
+  toast: vi.fn(),
   launchOptions: undefined as { runtime: { providers: { driver: string }[] } | null } | undefined,
   primarySession: { authenticated: true, scopes: ["orchestration:operate"] } as {
     authenticated: boolean;
@@ -21,6 +22,10 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("../../env", () => ({ isElectron: false }));
+vi.mock("../ui/toast", () => ({
+  stackedThreadToast: (toast: unknown) => toast,
+  toastManager: { add: state.toast },
+}));
 vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
 vi.mock("../../environments/primary", () => ({
   usePrimarySessionState: () => ({
@@ -63,6 +68,12 @@ vi.mock("./ProviderSettingsPanel", () => ({
 }));
 vi.mock("./settingsLayout", () => ({
   SettingsSection: ({ children }: { children: ReactNode }) => <section>{children}</section>,
+  SettingsRow: (props: { title: string; description: string }) => (
+    <div data-settings-row {...props} />
+  ),
+}));
+vi.mock("./SettingsGroup", () => ({
+  SettingsGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("./SandboxSettings", () => ({ useSandboxConfiguration: vi.fn() }));
 vi.mock("./SettingsScopeSentence", () => ({ SettingsScopeSentence: () => null }));
@@ -134,6 +145,7 @@ describe("SandboxProviders", () => {
   beforeEach(() => {
     state.save.mockReset();
     state.reload.mockReset();
+    state.toast.mockReset();
     state.launchOptions = undefined;
     state.primarySession = { authenticated: true, scopes: [AuthOrchestrationOperateScope] };
   });
@@ -220,7 +232,7 @@ describe("SandboxProviders", () => {
     expect(card(renderer!).props.instance.config.apiKey).toBe("saved-secret");
   });
 
-  it("keeps a failed draft and blocks editing until explicit Reload", async () => {
+  it("reports a failed save and reloads the saved configuration", async () => {
     const failed = deferred<{ _tag: "Failure"; cause: Error }>();
     state.save.mockReturnValue(failed.promise);
     await act(async () => {
@@ -233,14 +245,16 @@ describe("SandboxProviders", () => {
       await failed.promise;
     });
     expect(state.save).toHaveBeenCalledTimes(1);
-    expect(card(renderer!).props.instance.enabled).toBe(true);
-    expect(renderer!.root.findByProps({ role: "alert" }).children).toEqual(["revision conflict"]);
-    expect.soft(card(renderer!).props.readOnly).toBe(true);
-    expect.soft(state.reload).not.toHaveBeenCalled();
-
-    await act(async () => renderer!.root.findByType("button").props.onClick());
+    expect(state.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        title: "Could not save provider settings",
+        description: "revision conflict",
+      }),
+    );
     expect(state.reload).toHaveBeenCalledOnce();
     expect(card(renderer!).props.instance.enabled).toBe(false);
+    expect(card(renderer!).props.readOnly).toBe(false);
   });
 
   it("syncs a newer idle configuration and uses its revision for the next edit", async () => {

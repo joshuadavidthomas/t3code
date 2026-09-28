@@ -183,7 +183,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
     }),
   );
 
-  it.effect("labels a sandbox destination with its deployment label instead of the host name", () =>
+  it.effect("labels a sandbox destination with its deployment label and a cloud machine", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -200,6 +200,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         return yield* serverEnvironment.getDescriptor;
       }).pipe(Effect.provide(makeServerEnvironmentLayer(baseDir)));
       expect(descriptor.label).toBe("Fix the login flow");
+      expect(descriptor.platform.machine).toBe("cloud");
     }),
   );
 

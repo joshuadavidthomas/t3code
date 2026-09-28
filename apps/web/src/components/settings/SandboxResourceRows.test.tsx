@@ -29,7 +29,11 @@ vi.mock("~/state/session", () => ({
 }));
 vi.mock("~/environments/primary", () => ({ usePrimarySessionState: () => ({ data: null }) }));
 vi.mock("~/state/server", () => ({
-  serverEnvironment: { sandboxSubmissions: () => null, deleteSandboxSubmission: "remove" },
+  serverEnvironment: {
+    sandboxSubmissions: () => null,
+    sandboxConfiguration: () => null,
+    deleteSandboxSubmission: "remove",
+  },
 }));
 vi.mock("~/connection/catalog", () => ({ environmentCatalog: { setEnabled: "enable" } }));
 vi.mock("~/connection/onboarding", () => ({
@@ -106,7 +110,11 @@ describe("sandbox resource actions", () => {
   it("keeps registered destinations on ordinary connection controls and confirms cleanup before disabling them", async () => {
     const destinationId = EnvironmentId.make("destination");
     const submission = {
-      input: { commandId: "submission", title: "Workspace" },
+      input: {
+        commandId: "submission",
+        title: "Workspace",
+        configurationId: "6e458d05-9c26-4439-9004-f7e0e4ad2a24",
+      },
       progress: { phase: "done" },
       intakeStarted: true,
       destination: { environmentId: destinationId },
@@ -143,7 +151,7 @@ describe("sandbox resource actions", () => {
     try {
       expect(
         renderer.root.findAllByType("button").map((button) => button.children.join("")),
-      ).toEqual(["Delete sandbox"]);
+      ).toEqual(["Delete sandbox…"]);
       const remove = () => renderer.root.findByType("button").props.onClick();
       await act(async () => {
         remove();
@@ -155,7 +163,7 @@ describe("sandbox resource actions", () => {
       expect(state.enable).not.toHaveBeenCalled();
       expect(
         renderer.root
-          .findAllByType("p")
+          .findAllByType("span")
           .some((line) => line.children.includes("Provider unavailable")),
       ).toBe(true);
       await act(async () => {

@@ -4,6 +4,7 @@ import {
   resolveProviderInstanceEnabled,
   ProviderInstanceId,
   type ProviderDriverKind,
+  SANDBOX_PROVIDER_LABELS,
   type SandboxConfiguration,
   type SandboxRuntimeManifest,
 } from "@t3tools/contracts";
@@ -27,6 +28,9 @@ import {
 } from "../settings/ProviderSettingsPanel.logic";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { toastManager } from "../ui/toast";
+import { sandboxAccountLabel } from "../settings/settingsScopeNavigation";
+
+export const SANDBOX_MODELS_LOADING = "Sandbox models loading";
 
 /** Drivers the sandbox runtime can run; Settings and the composer offer only these. */
 export function sandboxRuntimeSupportsDriver(
@@ -92,7 +96,7 @@ export function resolveSandboxProviderEntry(
 /** Account queries share the same cached source used by Settings, and start before menus open. */
 export function useSandboxComposer(target: SandboxTarget | null, enabled: boolean) {
   const { environments } = useEnvironments();
-  const registrations = useAtomValue(
+  const accounts = useAtomValue(
     useMemo(
       () =>
         Atom.make((get) =>
@@ -111,9 +115,10 @@ export function useSandboxComposer(target: SandboxTarget | null, enabled: boolea
                 return Option.getOrElse(AsyncResult.value(result), () => []).map(
                   (configuration) => ({
                     ownerEnvironmentId: environment.environmentId,
+                    ownerLabel: environment.label,
                     configuration,
-                    label: configuration.name,
                     configurationId: configuration.id,
+                    providerLabel: SANDBOX_PROVIDER_LABELS[configuration.provider],
                   }),
                 );
               })
@@ -122,6 +127,16 @@ export function useSandboxComposer(target: SandboxTarget | null, enabled: boolea
       [enabled, environments],
     ),
   );
+  const registrations = useMemo(() => {
+    const entries = accounts.map((account) => ({
+      environment: { environmentId: account.ownerEnvironmentId, label: account.ownerLabel },
+      configuration: account.configuration,
+    }));
+    return accounts.map((account, index) => ({
+      ...account,
+      label: sandboxAccountLabel(entries[index]!, entries),
+    }));
+  }, [accounts]);
   const owner = environments.find(
     (environment) => environment.environmentId === target?.ownerEnvironmentId,
   );
@@ -163,19 +178,19 @@ export function useSandboxComposer(target: SandboxTarget | null, enabled: boolea
   const reason = !target
     ? null
     : !owner || owner.connection.phase !== "connected"
-      ? "Reconnect the environment to select models."
+      ? "Environment disconnected"
       : !registration
-        ? "Sandbox account unavailable."
+        ? "Sandbox account unavailable"
         : !registration.configuration.credentialConfigured
-          ? "Configure the sandbox account in Settings."
+          ? "Sandbox token required"
           : (query.error ??
             (!current
-              ? "Loading sandbox models…"
+              ? SANDBOX_MODELS_LOADING
               : (current.reason ??
                 (!current.runtime
-                  ? "Sandbox runtime unavailable."
+                  ? "Sandbox runtime unavailable"
                   : !catalog.some((entry) => entry.models.length > 0)
-                    ? "Configure a supported provider in Settings."
+                    ? "No provider configured"
                     : null))));
   const favoriteModels = useMemo(
     () =>
@@ -209,7 +224,14 @@ export function useSandboxComposer(target: SandboxTarget | null, enabled: boolea
                 isPending: remoteSession.isPending,
                 hasError: remoteSession.hasError,
               });
-      if (access !== "granted") return;
+      if (access !== "granted") {
+        toastManager.add({
+          type: "error",
+          title: "Could not save favorite models",
+          description: `This session can't change ${registration.configuration.name}'s settings.`,
+        });
+        return;
+      }
       const latest = registration.configuration;
       const modelPreferences = latest.providerModelPreferences[instanceId] ?? {
         hiddenModels: [],
@@ -243,6 +265,7 @@ export function useSandboxComposer(target: SandboxTarget | null, enabled: boolea
     registrations,
     catalog,
     reason,
+    loading: reason === SANDBOX_MODELS_LOADING,
     runtimeId: current?.runtime?.id ?? null,
     configurationRevision: current?.configurationRevision ?? null,
     favoriteModels,

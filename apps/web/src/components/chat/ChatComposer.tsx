@@ -1406,6 +1406,9 @@ export interface ChatComposerProps {
   providerStatuses: ServerProvider[];
   /** Runtime-declared, account-scoped catalog. Undefined keeps the ordinary host catalog path. */
   sandboxCatalog?: ReadonlyArray<DeclaredProviderInstanceEntry>;
+  /** True only while the sandbox catalog is still loading; any other gap shows the setup control. */
+  sandboxCatalogPending?: boolean;
+  onOpenSandboxSettings?: () => void;
   sandboxFavoriteModels?: ReadonlyMap<ProviderInstanceId, readonly string[]>;
   onSandboxFavoriteModelsChange?: (
     instanceId: ProviderInstanceId,
@@ -1542,6 +1545,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     lockedProvider,
     providerStatuses,
     sandboxCatalog,
+    sandboxCatalogPending = false,
+    onOpenSandboxSettings,
     sandboxFavoriteModels,
     onSandboxFavoriteModelsChange,
     providerCatalogKnown,
@@ -1938,9 +1943,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // the thread's own selection instead of swapping in the setup button and
   // back once the catalog lands.
   const providerCatalogPending =
-    noProviderAvailable && (sandboxCatalog !== undefined || !providerCatalogKnown);
-  const showProviderUnavailable =
-    sandboxCatalog === undefined && noProviderAvailable && !providerCatalogPending;
+    noProviderAvailable &&
+    (sandboxCatalog !== undefined ? sandboxCatalogPending : !providerCatalogKnown);
+  const showProviderUnavailable = noProviderAvailable && !providerCatalogPending;
   const providerSetupInstanceId =
     sandboxCatalog === undefined && noProviderAvailable
       ? (unavailableProviderInstanceId ??
@@ -5072,12 +5077,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
     .map((def) => def.id);
+  const canOpenProviderSetup =
+    sandboxCatalog === undefined ? providerSetupInstanceId !== undefined : !!onOpenSandboxSettings;
   const composerControls = showProviderUnavailable ? (
     <ComposerControl
       type="button"
-      disabled={!providerSetupInstanceId}
+      disabled={!canOpenProviderSetup}
       onClick={() => {
-        if (providerSetupInstanceId) {
+        if (sandboxCatalog !== undefined) {
+          onOpenSandboxSettings?.();
+        } else if (providerSetupInstanceId) {
           onOpenProviderSetup(providerSetupInstanceId);
         }
       }}
@@ -5085,7 +5094,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       className="shrink-0"
     >
       <CircleAlertIcon className="size-4" />
-      {providerSetupInstanceId ? "Open provider settings" : "No provider available"}
+      {canOpenProviderSetup ? "Open provider settings" : "No provider available"}
     </ComposerControl>
   ) : (
     <>
@@ -5178,13 +5187,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }
           : {})}
         onOpenChange={setIsComposerModelPickerOpen}
-        getModelDisabledReason={(instanceId, model) => {
-          if (sandboxCatalog === undefined) return getModelDisabledReason(instanceId, model);
-          const entry = sandboxCatalog.find((candidate) => candidate.instanceId === instanceId);
-          return entry?.models.some((candidate) => candidate.slug === model)
-            ? null
-            : "Model is not available in this account.";
-        }}
+        // The sandbox picker lists only its account's catalog, so nothing in it is disabled.
+        {...(sandboxCatalog === undefined ? { getModelDisabledReason } : {})}
         onInstanceModelChange={(instanceId, model) => {
           setMultipleModelSelections(null);
           onProviderModelSelect(instanceId, model);

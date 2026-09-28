@@ -192,7 +192,8 @@ export const make = Effect.gen(function* () {
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
   const sandboxDeployment = yield* readSandboxDeployment.pipe(Effect.orElseSucceed(() => null));
   const label = sandboxDeployment?.label ?? (yield* resolveServerEnvironmentLabel({ cwdBaseName }));
-  const machine = yield* detectServerEnvironmentMachineKind();
+  // Users started it "in the cloud"; a microVM's DMI data would otherwise say server or linux.
+  const machine = sandboxDeployment ? "cloud" : yield* detectServerEnvironmentMachineKind();
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
     desktopManaged: serverConfig.mode === "desktop",

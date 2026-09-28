@@ -197,9 +197,11 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
           )}
         </TooltipTrigger>
         <TooltipPopup>
-          {sandboxTarget
-            ? (activeSandbox?.label ?? "Unavailable environment")
-            : (autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on")}
+          {activeSandbox
+            ? `${activeSandbox.label} · ${activeSandbox.providerLabel}`
+            : sandboxTarget
+              ? "Unavailable"
+              : (autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on")}
         </TooltipPopup>
       </Tooltip>
       {workspaceIcon}
@@ -219,7 +221,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
           className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-drawer group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
         >
           {sandboxTarget
-            ? (activeSandbox?.label ?? "Unavailable environment")
+            ? (activeSandbox?.label ?? "Unavailable")
             : (autoEnvironmentLabel ??
               (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel))}
         </span>
@@ -318,7 +320,10 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                   >
                     <span className="flex min-w-0 items-center gap-1.5">
                       <CloudIcon className="size-3" aria-hidden="true" />
-                      <span className="min-w-0 truncate">{option.label}</span>
+                      <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {option.providerLabel}
+                      </span>
                     </span>
                   </MenuRadioItem>
                 ))}

@@ -286,11 +286,12 @@ export function BranchToolbarBranchSelector({
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
+  const sandboxDraft = !hasServerThread && draftThread?.sandboxTarget != null;
   const isSelectingBase = isSelectingBranchBase({
     effectiveEnvMode,
     envLocked,
     activeWorktreePath,
-    sandboxDraft: !hasServerThread && draftThread?.sandboxTarget != null,
+    sandboxDraft,
   });
   const checkoutPullRequestItemValue =
     prReference && onCheckoutPullRequestRequest ? `__checkout_pull_request__:${prReference}` : null;
@@ -655,6 +656,7 @@ export function BranchToolbarBranchSelector({
     resolvedActiveBranch,
     resolvedActiveBranchIsRemote,
     startFromOrigin,
+    sandboxDraft,
   });
 
   // Branch status is the fallback when this thread has no linked pull requests.

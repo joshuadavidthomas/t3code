@@ -708,6 +708,7 @@ it.effect("streams an initial list snapshot, additions, compact progress, and re
     expect(snapshot.submissions[0]!.input).toEqual({
       commandId: input.commandId,
       title: input.title,
+      configurationId: input.configurationId,
     });
     expect("runtime" in snapshot.submissions[0]!).toBe(false);
     expect("source" in snapshot.submissions[0]!).toBe(false);
@@ -721,7 +722,11 @@ it.effect("streams an initial list snapshot, additions, compact progress, and re
     };
     yield* service.submit(second);
     const added = (yield* Queue.take(additions)).submission;
-    expect(added.input).toEqual({ commandId: second.commandId, title: second.title });
+    expect(added.input).toEqual({
+      commandId: second.commandId,
+      title: second.title,
+      configurationId: second.configurationId,
+    });
     expect("runtime" in added).toBe(false);
     yield* Deferred.await(createEntered);
     const progress = yield* Queue.take(updates);

@@ -410,46 +410,39 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
             if (environment) setSelectedEnvironmentId(environment.environmentId);
           }}
         >
-          {options
-            .filter(
-              (environment) =>
-                !target.scoped || environment.environmentId === effectiveEnvironmentId,
-            )
-            .map((environment) => {
-              const machine = resolveEnvironmentMachineKind(environment.serverConfig);
-              const detail = providerEnvironmentDetail(environment);
-              const statusText = connectionStatusTitle(environment.connection);
-              return (
-                <Tooltip key={environment.environmentId}>
-                  <TooltipTrigger
-                    render={
-                      <Toggle value={environment.environmentId}>
-                        <EnvironmentMachineIcon
-                          kind={machine}
-                          className="size-3.5 shrink-0"
-                          aria-hidden
+          {options.map((environment) => {
+            const machine = resolveEnvironmentMachineKind(environment.serverConfig);
+            const detail = providerEnvironmentDetail(environment);
+            const statusText = connectionStatusTitle(environment.connection);
+            return (
+              <Tooltip key={environment.environmentId}>
+                <TooltipTrigger
+                  render={
+                    <Toggle value={environment.environmentId}>
+                      <EnvironmentMachineIcon
+                        kind={machine}
+                        className="size-3.5 shrink-0"
+                        aria-hidden
+                      />
+                      <span className="max-w-40 truncate">{environment.label}</span>
+                      {environment.connection.phase !== "connected" ? (
+                        <ConnectionStatusDot
+                          dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
+                          pingClassName={connectionPhasePingClassName(environment.connection.phase)}
                         />
-                        <span className="max-w-40 truncate">{environment.label}</span>
-                        {environment.connection.phase !== "connected" ? (
-                          <ConnectionStatusDot
-                            dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
-                            pingClassName={connectionPhasePingClassName(
-                              environment.connection.phase,
-                            )}
-                          />
-                        ) : null}
-                        <span className="sr-only">
-                          {detail}, {statusText}
-                        </span>
-                      </Toggle>
-                    }
-                  />
-                  <TooltipPopup side="top">
-                    {detail} · {statusText}
-                  </TooltipPopup>
-                </Tooltip>
-              );
-            })}
+                      ) : null}
+                      <span className="sr-only">
+                        {detail}, {statusText}
+                      </span>
+                    </Toggle>
+                  }
+                />
+                <TooltipPopup side="top">
+                  {detail} · {statusText}
+                </TooltipPopup>
+              </Tooltip>
+            );
+          })}
         </ToggleGroup>
       </ScrollArea>
     ) : null;
@@ -1075,11 +1068,7 @@ export function EnvironmentProviderSettings({
     <>
       <SettingsSection {...searchableSetting("providers")} variant="plain">
         <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">
-          {deviceTabs ?? (
-            <span className="min-w-0 truncate text-xs text-muted-foreground">
-              {environmentLabel}
-            </span>
-          )}
+          {deviceTabs}
           <div className="ml-auto flex min-w-0 shrink-0 items-center gap-2">
             {readOnly ? (
               <span className="min-w-0 truncate text-xs text-muted-foreground">

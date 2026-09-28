@@ -396,6 +396,7 @@ interface ProviderInstanceCardProps {
   readonly onRunUpdate?: (() => void) | undefined;
   readonly onInstallRecommended?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  /** Headline for an enabled instance with no live server status, e.g. a sandbox runtime. */
   readonly statusLabel?: string | undefined;
 }
 
@@ -445,16 +446,18 @@ export function ProviderInstanceCard({
   const enabled = resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   // A locally disabled provider reads "Disabled" with a muted dot even if its
-  // last server status is stale. Enabled providers use the server status.
-  const statusKey: ProviderStatusKey = enabled
-    ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
-    : "disabled";
+  // last server status is stale. Enabled providers use the server status, and
+  // a caller-supplied status has no live status to color the dot with.
+  const statusKey: ProviderStatusKey =
+    enabled && !statusLabel
+      ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
+      : "disabled";
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
-  const summary = statusLabel
-    ? { headline: statusLabel, detail: null }
-    : enabled
-      ? getProviderSummary(liveProvider)
-      : { headline: "Disabled", detail: null };
+  const summary = !enabled
+    ? { headline: "Disabled", detail: null }
+    : statusLabel
+      ? { headline: statusLabel, detail: null }
+      : getProviderSummary(liveProvider);
   const authEmail = liveProvider?.auth.email?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
   const authLabel =

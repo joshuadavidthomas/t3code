@@ -1,6 +1,10 @@
-import { type EnvironmentId, type SandboxConfiguration } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  SANDBOX_PROVIDER_LABELS,
+  type SandboxConfiguration,
+} from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { CloudIcon, EllipsisIcon, PlusIcon } from "lucide-react";
+import { EllipsisIcon, PlusIcon } from "lucide-react";
 import { useId, useState } from "react";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { serverEnvironment } from "../../state/server";
@@ -8,18 +12,24 @@ import { useEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { toastManager } from "../ui/toast";
+import { stackedThreadToast, toastManager } from "../ui/toast";
+import { EnvironmentRow, formatAccessTimestamp } from "./EnvironmentRow";
 import { searchableSetting } from "./settingsSearch";
 
 const EMPTY_SANDBOX_CONFIGURATIONS: readonly SandboxConfiguration[] = [];
-
-export const SANDBOX_PROVIDER_LABELS: Record<SandboxConfiguration["provider"], string> = {
-  sprites: "Sprites",
-};
 
 function formatFailure(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
   const failure = squashAtomCommandFailure(result);
@@ -39,6 +49,7 @@ export function useSandboxConfiguration(environmentId: EnvironmentId | null, ena
     error: connected ? query.error : null,
     loading: !connected || (!query.isSuccess && query.error === null),
     reload: query.refresh,
+    refreshing: query.isPending,
   };
 }
 
@@ -78,78 +89,75 @@ export function SandboxRegistrationRow({
     setPending(false);
     if (response._tag === "Failure") setError(formatFailure(response));
   };
+  const status = error
+    ? error
+    : pending
+      ? "Updating…"
+      : !configuration.credentialConfigured
+        ? "Token required"
+        : configuration.verifiedAt
+          ? `Verified ${formatAccessTimestamp(configuration.verifiedAt)}`
+          : "Not verified";
   return (
-    <div
-      {...searchableSetting("sandbox-account")}
-      className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2.5 sm:px-4"
-    >
-      <CloudIcon className="size-4 text-muted-foreground" aria-hidden />
-      <div className="min-w-0">
-        <p className="flex items-center gap-1.5 text-sm font-medium">
-          {configuration.name}
-          <Badge variant="warning" size="sm" className="shrink-0">
-            Early Access
-          </Badge>
-        </p>
-        <p className="text-xs text-muted-foreground">
-          {providerLabel} ·{" "}
-          {pending
-            ? "Updating…"
-            : !configuration.credentialConfigured
-              ? "Token required"
-              : configuration.verifiedAt
-                ? `Verified ${new Date(configuration.verifiedAt).toLocaleString()}`
-                : "Not verified"}
-        </p>
-        {error ? (
-          <p role="alert" className="text-xs text-destructive">
-            {error}
-          </p>
-        ) : null}
-      </div>
-      <Menu>
-        <MenuTrigger
-          render={
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={`${configuration.name} actions`}
-              disabled={pending}
-            />
-          }
-        >
-          <EllipsisIcon className="size-4" />
-        </MenuTrigger>
-        <MenuPopup align="end">
-          <MenuItem onClick={onEdit}>Edit provider…</MenuItem>
-          <MenuItem
-            disabled={!configuration.credentialConfigured}
-            onClick={() => void act("verify")}
+    <div {...searchableSetting("sandbox-account")}>
+      <EnvironmentRow
+        kind="cloud"
+        label={
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate">{configuration.name}</span>
+            <Badge variant="warning" size="sm" className="shrink-0">
+              Early Access
+            </Badge>
+          </span>
+        }
+        subtitle={
+          <span className={error ? "block truncate text-destructive" : "block truncate"}>
+            {providerLabel} · {status}
+          </span>
+        }
+      >
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost-muted"
+                size="icon-xs"
+                disabled={pending}
+                aria-label={`More actions for ${configuration.name}`}
+              />
+            }
           >
-            Verify
-          </MenuItem>
-          <MenuItem variant="destructive" onClick={() => void act("remove")}>
-            Remove
-          </MenuItem>
-        </MenuPopup>
-      </Menu>
+            <EllipsisIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem onClick={onEdit}>Edit…</MenuItem>
+            <MenuItem
+              disabled={!configuration.credentialConfigured}
+              onClick={() => void act("verify")}
+            >
+              Verify
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem variant="destructive" onClick={() => void act("remove")}>
+              Remove…
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
+      </EnvironmentRow>
     </div>
   );
 }
 
 export function SandboxConfigurationForm({
   environmentId,
-  configuration,
   onSaved,
 }: {
   environmentId: EnvironmentId;
-  configuration: SandboxConfiguration | null;
   onSaved: () => void;
 }) {
   const providerId = useId();
-  const [provider, setProvider] = useState<SandboxConfiguration["provider"] | null>(
-    configuration?.provider ?? null,
-  );
+  const [provider, setProvider] = useState<SandboxConfiguration["provider"] | null>(null);
   return (
     <div className="space-y-4">
       <div>
@@ -174,7 +182,7 @@ export function SandboxConfigurationForm({
       {provider === "sprites" ? (
         <SpritesConfigurationForm
           environmentId={environmentId}
-          configuration={configuration}
+          configuration={null}
           onSaved={onSaved}
         />
       ) : null}
@@ -182,27 +190,75 @@ export function SandboxConfigurationForm({
   );
 }
 
+/** Edits a saved account; its provider is fixed once added. */
+export function EditSandboxConfigurationDialog({
+  environmentId,
+  configuration,
+  onClose,
+}: {
+  environmentId: EnvironmentId;
+  configuration: SandboxConfiguration | null;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog
+      open={configuration !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogPopup className="max-w-md">
+        {configuration ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Edit {configuration.name}</DialogTitle>
+              <DialogDescription>
+                Update this {SANDBOX_PROVIDER_LABELS[configuration.provider]} account.
+              </DialogDescription>
+            </DialogHeader>
+            <SpritesConfigurationForm
+              key={configuration.id}
+              environmentId={environmentId}
+              configuration={configuration}
+              onSaved={onClose}
+              onCancel={onClose}
+            />
+          </>
+        ) : null}
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+/**
+ * Adding renders inline with the other Add Environment modes; editing (with
+ * `onCancel`) renders as a dialog panel and footer.
+ */
 function SpritesConfigurationForm({
   environmentId,
   configuration,
   onSaved,
+  onCancel,
 }: {
   environmentId: EnvironmentId;
   configuration: SandboxConfiguration | null;
   onSaved: () => void;
+  onCancel?: () => void;
 }) {
   const save = useAtomCommand(serverEnvironment.saveSandboxConfiguration, { reportFailure: false });
   const verify = useAtomCommand(serverEnvironment.verifySandboxConfiguration, {
     reportFailure: false,
   });
+  const formId = useId();
   const [current, setCurrent] = useState(configuration);
   const [name, setName] = useState(configuration?.name ?? "");
   const [namePrefix, setNamePrefix] = useState(configuration?.namePrefix ?? "");
   const [credential, setCredential] = useState("");
-  const [clearCredential, setClearCredential] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const canSubmit = !pending && name.trim().length > 0 && (current !== null || credential.trim());
   const submit = async () => {
+    if (!canSubmit) return;
     setPending(true);
     setError(null);
     const saved = await save({
@@ -213,11 +269,7 @@ function SpritesConfigurationForm({
         namePrefix: namePrefix.trim(),
         expectedRevision: current?.revision ?? 0,
         ...(current ? { id: current.id } : {}),
-        ...(clearCredential
-          ? { credential: null }
-          : credential.trim()
-            ? { credential: credential.trim() }
-            : {}),
+        ...(credential.trim() ? { credential: credential.trim() } : {}),
       },
     });
     if (saved._tag === "Failure") {
@@ -227,7 +279,6 @@ function SpritesConfigurationForm({
     }
     setCurrent(saved.value);
     setCredential("");
-    setClearCredential(false);
     if (saved.value.credentialConfigured) {
       const verified = await verify({
         environmentId,
@@ -235,11 +286,13 @@ function SpritesConfigurationForm({
       });
       if (verified._tag === "Failure") {
         // Verification advances the persisted revision even when the provider rejects the token.
-        toastManager.add({
-          type: "error",
-          title: "Sprites registered, verification failed",
-          description: formatFailure(verified),
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not verify ${saved.value.name}`,
+            description: formatFailure(verified),
+          }),
+        );
         onSaved();
         return;
       }
@@ -247,76 +300,85 @@ function SpritesConfigurationForm({
     setPending(false);
     onSaved();
   };
-  return (
-    <div className="space-y-4">
-      <div className="space-y-3">
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">Name</span>
-          <Input
-            value={name}
-            disabled={pending}
-            placeholder="Personal or Work"
-            aria-label="Registration name"
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">
-            Sprites API token
-          </span>
-          <Input
-            type="password"
-            value={credential}
-            disabled={pending || clearCredential}
-            placeholder={
-              current?.credentialConfigured ? "Configured — leave blank to keep" : "Enter API token"
-            }
-            aria-label="Sprites API token"
-            onChange={(event) => setCredential(event.target.value)}
-          />
-        </label>
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">
-            Sprite name prefix
-          </span>
-          <Input
-            value={namePrefix}
-            disabled={pending}
-            placeholder="Optional, e.g. orb-"
-            aria-label="Sprite name prefix"
-            onChange={(event) => setNamePrefix(event.target.value.toLowerCase())}
-          />
-        </label>
-        {current?.credentialConfigured ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={pending}
-            onClick={() => setClearCredential((value) => !value)}
-          >
-            {clearCredential ? "Keep token" : "Clear token"}
-          </Button>
-        ) : null}
-      </div>
+  const fields = (
+    <form
+      id={formId}
+      className="space-y-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <label className="block">
+        <span className="mb-1.5 block text-xs font-medium text-foreground">Name</span>
+        <Input
+          value={name}
+          disabled={pending}
+          placeholder="e.g. Personal"
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      <label className="block">
+        <span className="mb-1.5 block text-xs font-medium text-foreground">Sprites API token</span>
+        <Input
+          type="password"
+          autoComplete="off"
+          value={credential}
+          disabled={pending}
+          placeholder={
+            current?.credentialConfigured
+              ? "Stored secret, enter a new value to replace"
+              : undefined
+          }
+          onChange={(event) => setCredential(event.target.value)}
+        />
+      </label>
+      <label className="block">
+        <span className="mb-1.5 block text-xs font-medium text-foreground">
+          Sprite name prefix (optional)
+        </span>
+        <Input
+          value={namePrefix}
+          disabled={pending}
+          placeholder="e.g. work-"
+          spellCheck={false}
+          onChange={(event) => setNamePrefix(event.target.value.toLowerCase())}
+        />
+      </label>
       {error ? (
         <p role="alert" className="text-xs text-destructive">
           {error}
         </p>
       ) : null}
+    </form>
+  );
+  if (onCancel) {
+    return (
+      <>
+        <DialogPanel>{fields}</DialogPanel>
+        <DialogFooter variant="bare">
+          <Button variant="outline" disabled={pending} onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button type="submit" form={formId} disabled={!canSubmit}>
+            {pending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      {fields}
       <Button
+        type="submit"
+        form={formId}
         variant="outline"
         className="w-full"
-        disabled={pending || !name.trim() || (!current && !credential.trim())}
-        onClick={() => void submit()}
+        disabled={!canSubmit}
       >
-        {!configuration ? <PlusIcon className="size-3.5" /> : null}
-        {configuration
-          ? pending
-            ? "Saving…"
-            : "Save changes"
-          : pending
-            ? "Adding…"
-            : "Add environment"}
+        <PlusIcon className="size-3.5" />
+        {pending ? "Adding…" : "Add environment"}
       </Button>
     </div>
   );

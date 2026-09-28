@@ -231,6 +231,8 @@ export function resolveBranchTriggerLabel(input: {
   resolvedActiveBranch: string | null;
   resolvedActiveBranchIsRemote: boolean | null;
   startFromOrigin: boolean;
+  /** A sandbox draft clones the published branch, so it names its base like a new worktree. */
+  sandboxDraft?: boolean;
 }): string {
   const {
     activeWorktreePath,
@@ -242,6 +244,7 @@ export function resolveBranchTriggerLabel(input: {
   if (!resolvedActiveBranch) {
     return "Select ref";
   }
+  if (input.sandboxDraft) return `From ${resolvedActiveBranch}`;
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
     const baseRef =
       startFromOrigin && resolvedActiveBranchIsRemote === false

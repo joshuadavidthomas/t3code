@@ -32,7 +32,6 @@
     "vercel.ts",
     "test",
     "scripts/warm-dep-cache.ts",
-    "../../.agents/t3-portal.ts",
     "../../scripts/lib/public-config.ts",
     "../../scripts/lib/third-party-licenses.ts"
   ]

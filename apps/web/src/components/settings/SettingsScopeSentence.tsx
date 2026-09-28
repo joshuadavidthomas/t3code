@@ -44,7 +44,7 @@ interface SettingsScopeMenuProps {
 }
 
 export interface SettingsEnvironmentMenuExtension {
-  readonly selected?: { value: string; label: string; icon: ReactNode };
+  readonly selected?: { value: string; label: string; ariaLabel?: string; icon: ReactNode };
   readonly options: ReactNode;
   /** Return true when a page-specific target handled this selection. */
   readonly onSelect: (value: string) => boolean;
@@ -99,17 +99,19 @@ function ScopeMenu({
   ariaLabel,
   icon,
   label,
+  valueLabel = label,
   children,
 }: {
   ariaLabel: string;
   icon: ReactNode;
   label: string;
+  valueLabel?: string;
   children: ReactNode;
 }) {
   return (
     <Menu>
       <MenuTrigger
-        aria-label={`${ariaLabel}: ${label}`}
+        aria-label={`${ariaLabel}: ${valueLabel}`}
         render={<InlineButton tone="picker" />}
         className="min-w-0 max-w-72"
       >
@@ -142,6 +144,7 @@ function EnvironmentScopeMenu({
   return (
     <ScopeMenu
       ariaLabel="Environment scope"
+      {...(extension?.selected?.ariaLabel ? { valueLabel: extension.selected.ariaLabel } : {})}
       icon={
         extension?.selected ? (
           extension.selected.icon

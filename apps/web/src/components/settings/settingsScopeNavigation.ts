@@ -28,6 +28,27 @@ export function selectSandboxProviderTarget(
   };
 }
 
+interface SandboxAccountEntry {
+  readonly environment: { readonly environmentId: string; readonly label: string };
+  readonly configuration: { readonly id: string; readonly name: string };
+}
+
+/** Same-named accounts on different hosts are told apart by host, like environments. */
+export function sandboxAccountLabel(
+  entry: SandboxAccountEntry,
+  entries: readonly SandboxAccountEntry[],
+) {
+  const duplicate = entries.some(
+    (other) =>
+      (other.environment.environmentId !== entry.environment.environmentId ||
+        other.configuration.id !== entry.configuration.id) &&
+      other.configuration.name === entry.configuration.name,
+  );
+  return duplicate
+    ? `${entry.configuration.name} · ${entry.environment.label}`
+    : entry.configuration.name;
+}
+
 export function sandboxProviderMenuValue(ownerEnvironmentId: string, configurationId: string) {
   return `sandbox:${JSON.stringify([ownerEnvironmentId, configurationId])}`;
 }

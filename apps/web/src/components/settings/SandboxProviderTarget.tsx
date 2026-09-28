@@ -1,6 +1,7 @@
 import {
   defaultInstanceIdForDriver,
   type EnvironmentId,
+  SANDBOX_PROVIDER_LABELS,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   type SandboxConfiguration,
@@ -19,7 +20,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { MenuRadioItem, MenuRadioItemIndicator } from "../ui/menu";
-import { Button } from "../ui/button";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { ProviderSettingsEditorLayout, ProviderSettingsPlaceholder } from "./ProviderSettingsPanel";
 import { DRIVER_OPTIONS } from "./providerDriverMeta";
@@ -29,10 +30,12 @@ import { SettingsScopeSentence } from "./SettingsScopeSentence";
 import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import {
   parseSandboxProviderMenuValue,
+  sandboxAccountLabel,
   sandboxProviderMenuValue,
   selectSandboxProviderTarget,
 } from "./settingsScopeNavigation";
-import { SettingsSection } from "./settingsLayout";
+import { SettingsGroup } from "./SettingsGroup";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
   resolvePrimaryOperateAccess,
@@ -83,27 +86,26 @@ export function ProviderSettingsScopeSentence({
   const { environments } = useEnvironments();
   const navigate = useNavigate();
   const scope = useOptionalSettingsScope();
-  const registrations = useAtomValue(
+  const { registrations, loadingEnvironmentIds } = useAtomValue(
     useMemo(
       () =>
-        Atom.make((get) =>
-          environments.flatMap((environment) => {
+        Atom.make((get) => {
+          const loadingEnvironmentIds = new Set<EnvironmentId>();
+          const registrations = environments.flatMap((environment) => {
             if (environment.serverConfig?.environment.capabilities.sandboxConfiguration !== true)
               return [];
-            const configurations = Option.getOrElse(
-              AsyncResult.value(
-                get(
-                  serverEnvironment.sandboxConfiguration({
-                    environmentId: environment.environmentId,
-                    input: {},
-                  }),
-                ),
-              ),
-              () => [],
+            const result = get(
+              serverEnvironment.sandboxConfiguration({
+                environmentId: environment.environmentId,
+                input: {},
+              }),
             );
+            if (AsyncResult.isInitial(result)) loadingEnvironmentIds.add(environment.environmentId);
+            const configurations = Option.getOrElse(AsyncResult.value(result), () => []);
             return configurations.map((configuration) => ({ environment, configuration }));
-          }),
-        ),
+          });
+          return { registrations, loadingEnvironmentIds };
+        }),
       [environments],
     ),
   );
@@ -112,6 +114,12 @@ export function ProviderSettingsScopeSentence({
       environment.environmentId === target?.ownerEnvironmentId &&
       configuration.id === target.configurationId,
   );
+  // Keep the trigger blank while the owner's accounts load instead of flashing "Unavailable".
+  const selectedLabel = selectedRegistration
+    ? sandboxAccountLabel(selectedRegistration, registrations)
+    : target?.ownerEnvironmentId && loadingEnvironmentIds.has(target.ownerEnvironmentId)
+      ? ""
+      : "Unavailable environment";
   return (
     <SettingsScopeSentence
       environmentMenu={{
@@ -122,26 +130,38 @@ export function ProviderSettingsScopeSentence({
                   target.ownerEnvironmentId ?? "",
                   target.configurationId,
                 ),
-                label: selectedRegistration?.configuration.name ?? "Unavailable environment",
+                label: selectedLabel,
+                ...(selectedRegistration
+                  ? {
+                      ariaLabel: `${selectedLabel} (${SANDBOX_PROVIDER_LABELS[selectedRegistration.configuration.provider]})`,
+                    }
+                  : {}),
                 icon: <CloudIcon aria-hidden className="size-3.5 shrink-0" />,
               },
             }
           : {}),
-        options: registrations.map(({ environment, configuration }) => (
-          <MenuRadioItem
-            key={`${environment.environmentId}:${configuration.id}`}
-            value={sandboxProviderMenuValue(environment.environmentId, configuration.id)}
-          >
-            <span className="flex min-w-0 items-center gap-2">
-              <CloudIcon aria-hidden className="size-3.5" />
-              <span className="min-w-0 flex-1 truncate">{configuration.name}</span>
-              {environment.connection.phase !== "connected" ? (
-                <span className="shrink-0 text-xs text-muted-foreground">Offline</span>
-              ) : null}
-              <MenuRadioItemIndicator />
-            </span>
-          </MenuRadioItem>
-        )),
+        options: registrations.map((registration) => {
+          const { environment, configuration } = registration;
+          return (
+            <MenuRadioItem
+              key={`${environment.environmentId}:${configuration.id}`}
+              value={sandboxProviderMenuValue(environment.environmentId, configuration.id)}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <CloudIcon aria-hidden className="size-3.5" />
+                <span className="min-w-0 flex-1 truncate">
+                  {sandboxAccountLabel(registration, registrations)}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {environment.connection.phase !== "connected"
+                    ? "Offline"
+                    : SANDBOX_PROVIDER_LABELS[configuration.provider]}
+                </span>
+                <MenuRadioItemIndicator />
+              </span>
+            </MenuRadioItem>
+          );
+        }),
         onSelect: (value) => {
           const selected = parseSandboxProviderMenuValue(value);
           if (!selected) return false;
@@ -183,22 +203,24 @@ export function SandboxProviderTargetContent({ target }: { target: SandboxProvid
   const supported = owner?.serverConfig?.environment.capabilities.sandboxConfiguration === true;
   const result = useSandboxConfiguration(target.ownerEnvironmentId, supported);
   let unavailable: string | null = null;
-  if (!owner) unavailable = "Server unavailable.";
+  if (!owner) unavailable = "This environment is no longer available.";
   else if (owner.connection.phase !== "connected")
-    unavailable = `Reconnect ${owner.label} to view this sandbox provider.`;
-  else if (!supported) unavailable = "Sandboxes are unavailable on this server.";
+    unavailable = `Reconnect ${owner.label} to set up its providers.`;
+  else if (!supported) unavailable = "Sandboxes are unavailable on this environment.";
   else if (result.error) unavailable = result.error;
   else if (
     !result.loading &&
     !result.configurations.some((configuration) => configuration.id === target.configurationId)
   )
-    unavailable = "This sandbox provider is no longer available.";
+    unavailable = "This sandbox account is no longer available.";
   if (unavailable || result.loading) {
     return (
       <ProviderSettingsPlaceholder
         icon={<CloudIcon />}
-        title={unavailable ? "Sandbox unavailable" : "Loading sandbox"}
-        description={unavailable ?? "Loading configuration…"}
+        title={unavailable ? "Provider settings are unavailable" : "Loading provider settings"}
+        description={
+          unavailable ?? `Waiting for ${owner?.label ?? "this environment"}'s configuration.`
+        }
       />
     );
   }
@@ -258,7 +280,6 @@ export function SandboxProviders({
     }>
   >([]);
   const draining = useRef(false);
-  const [error, setError] = useState<string | null>(null);
   const launchOptions = useEnvironmentQuery(
     serverEnvironment.sandboxLaunchOptions({
       environmentId: environment.environmentId,
@@ -274,14 +295,21 @@ export function SandboxProviders({
     defaultInstanceIdForDriver(DRIVER_OPTIONS[0]!.value),
   );
 
-  useEffect(() => {
-    if (draining.current || pending.current.length > 0 || error) return;
+  const syncFromConfiguration = () => {
     revision.current = configuration.revision;
     instancesRef.current = configuration.providerInstances;
     preferencesRef.current = configuration.providerModelPreferences;
     setDraftInstances(configuration.providerInstances);
     setDraftPreferences(configuration.providerModelPreferences);
-  }, [configuration, error]);
+  };
+  useEffect(() => {
+    if (draining.current || pending.current.length > 0) return;
+    revision.current = configuration.revision;
+    instancesRef.current = configuration.providerInstances;
+    preferencesRef.current = configuration.providerModelPreferences;
+    setDraftInstances(configuration.providerInstances);
+    setDraftPreferences(configuration.providerModelPreferences);
+  }, [configuration]);
 
   const drain = async () => {
     if (draining.current || pending.current.length === 0) return;
@@ -302,11 +330,19 @@ export function SandboxProviders({
         const failure = squashAtomCommandFailure(response);
         pending.current = [];
         draining.current = false;
-        setError(
-          failure instanceof Error && failure.message.trim()
-            ? failure.message
-            : "Could not save provider settings.",
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not save provider settings",
+            description:
+              failure instanceof Error && failure.message.trim()
+                ? failure.message
+                : "The sandbox account could not be updated.",
+          }),
         );
+        // Drop unsaved edits and pick up whatever the server has now.
+        syncFromConfiguration();
+        reload();
         return;
       }
       revision.current = response.value.revision;
@@ -330,8 +366,7 @@ export function SandboxProviders({
       modelOrder: [],
     },
   ) => {
-    if (readOnly || error) return;
-    setError(null);
+    if (readOnly) return;
     pending.current.push({ instanceId, instance, modelPreferences });
     void drain();
   };
@@ -392,8 +427,8 @@ export function SandboxProviders({
         mode={mode}
         selected={selectedInstanceId === instanceId}
         onSelect={() => setSelected(instanceId)}
-        readOnly={readOnly || error !== null}
-        statusLabel="Runtime default"
+        readOnly={readOnly}
+        statusLabel="Enabled"
         onUpdate={(next) => updateInstance(instanceId, instance, next)}
         hiddenModels={preferences.hiddenModels}
         favoriteModels={preferences.favoriteModels}
@@ -411,34 +446,15 @@ export function SandboxProviders({
 
   return (
     <SettingsSection {...searchableSetting("providers")} variant="plain">
-      {readOnly || error ? (
-        <div className="flex min-h-11 min-w-0 items-center px-3 text-xs text-muted-foreground sm:px-4">
-          {error ? (
-            <div className="flex w-full items-center justify-between gap-3">
-              <span role="alert" className="text-destructive">
-                {error}
-              </span>
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => {
-                  pending.current = [];
-                  revision.current = configuration.revision;
-                  instancesRef.current = configuration.providerInstances;
-                  preferencesRef.current = configuration.providerModelPreferences;
-                  setDraftInstances(configuration.providerInstances);
-                  setDraftPreferences(configuration.providerModelPreferences);
-                  setError(null);
-                  reload();
-                }}
-              >
-                Reload settings
-              </Button>
-            </div>
-          ) : (
-            "Limited permissions — settings are read-only."
-          )}
-        </div>
+      {/* Same header row as an environment's providers, with no refresh or add controls. */}
+      <div className="min-h-11" />
+      {readOnly ? (
+        <SettingsGroup divided={false} className="overflow-hidden">
+          <SettingsRow
+            title="Limited permissions"
+            description={`This session can view ${configuration.name}'s providers but can't change their settings.`}
+          />
+        </SettingsGroup>
       ) : null}
       <ProviderSettingsEditorLayout
         list={driverOptions.map((option) => render(option, "list"))}

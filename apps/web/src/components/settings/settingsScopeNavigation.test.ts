@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveSettingsScope } from "./settingsScope";
 import {
   retainSettingsScope,
+  sandboxAccountLabel,
   validateSettingsRouteSearch,
   validateProviderSettingsSearch,
   selectSandboxProviderTarget,
@@ -309,5 +310,22 @@ describe("settings scope navigation", () => {
     await router.navigate(router.state.redirect!.options);
     expect(router.state.location.pathname).toBe("/settings/general");
     expect(router.state.location.search).toEqual({ machine: "remote-server" });
+  });
+});
+
+describe("sandboxAccountLabel", () => {
+  const entry = (environmentId: string, label: string, id: string, name: string) => ({
+    environment: { environmentId, label },
+    configuration: { id, name },
+  });
+
+  it("names a unique account by itself and qualifies a repeated name with its host", () => {
+    const laptop = entry("laptop", "Laptop", "a", "Personal");
+    const server = entry("server", "Server", "b", "Personal");
+    const work = entry("server", "Server", "c", "Work");
+    const entries = [laptop, server, work];
+    expect(sandboxAccountLabel(work, entries)).toBe("Work");
+    expect(sandboxAccountLabel(laptop, entries)).toBe("Personal · Laptop");
+    expect(sandboxAccountLabel(server, entries)).toBe("Personal · Server");
   });
 });

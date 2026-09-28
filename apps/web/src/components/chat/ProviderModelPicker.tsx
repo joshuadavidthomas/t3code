@@ -93,12 +93,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
     : triggerTitle;
   const showInstanceBadge =
-    activeEntry !== null &&
-    !("source" in activeEntry) &&
-    shouldShowInstanceBadge(
-      activeEntry,
-      props.instanceEntries.filter((entry) => !("source" in entry)),
-    );
+    activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
 
   const setIsMenuOpen = (open: boolean) => {
     props.onOpenChange?.(open);

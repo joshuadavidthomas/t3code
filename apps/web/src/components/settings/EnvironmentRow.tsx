@@ -12,6 +12,19 @@ export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): str
   return target.port ? `${authority}:${target.port}` : authority;
 }
 
+const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+export function formatAccessTimestamp(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return accessTimestampFormatter.format(parsed);
+}
+
 /**
  * How this client reaches a machine, printed first in every environment row so
  * T3 Connect, SSH, WSL, and plain remote links are told apart without a legend.
@@ -46,7 +59,7 @@ export function EnvironmentRow({
   children,
 }: {
   readonly kind: EnvironmentMachineKind;
-  readonly label: string;
+  readonly label: ReactNode;
   readonly subtitle: ReactNode;
   /** Extra content under the subtitle, such as update progress. */
   readonly below?: ReactNode;

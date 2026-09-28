@@ -4,9 +4,10 @@ import {
   AuthOrchestrationOperateScope,
   AuthStandardClientScopes,
   type AuthSessionState,
+  SANDBOX_PROVIDER_LABELS,
   type SandboxSubmission,
 } from "@t3tools/contracts";
-import { CloudIcon, EllipsisIcon } from "lucide-react";
+import { EllipsisIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { SANDBOX_PAIRING_SCOPE_MESSAGE, useConnectSandboxDestination } from "../useSandbox";
@@ -21,6 +22,7 @@ import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { EnvironmentRow } from "./EnvironmentRow";
 
 export function canOperateSandboxResources(
   environment: EnvironmentPresentation,
@@ -75,6 +77,9 @@ function SandboxOwnerResources({
   const { environments } = useEnvironments();
   const submissions = useEnvironmentQuery(
     serverEnvironment.sandboxSubmissions({ environmentId: environment.environmentId, input: {} }),
+  );
+  const configurations = useEnvironmentQuery(
+    serverEnvironment.sandboxConfiguration({ environmentId: environment.environmentId, input: {} }),
   );
   const hasResources =
     submissions.data?.some((submission) => submission.deletedAt === null) ?? false;
@@ -168,78 +173,77 @@ function SandboxOwnerResources({
         !environments.some(
           (entry) => entry.environmentId === submission.destination?.environmentId,
         );
+      const configuration = configurations.data?.find(
+        (candidate) => candidate.id === submission.input.configurationId,
+      );
+      const error = errors[commandId] || submission.deletionError;
+      const status =
+        errors[commandId] ||
+        (connectable && !canPair
+          ? SANDBOX_PAIRING_SCOPE_MESSAGE
+          : sandboxResourceStatus(submission));
       return (
-        <div
+        <EnvironmentRow
           key={commandId}
-          className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2.5 sm:px-4"
+          kind="cloud"
+          label={submission.input.title}
+          subtitle={
+            <span className={error ? "block truncate text-destructive" : "block truncate"}>
+              {configuration
+                ? `${SANDBOX_PROVIDER_LABELS[configuration.provider]} · ${status}`
+                : status}
+            </span>
+          }
         >
-          <CloudIcon aria-hidden className="size-4 text-muted-foreground" />
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{submission.input.title}</p>
-            <p
-              className={
-                errors[commandId] || submission.deletionError
-                  ? "truncate text-xs text-destructive"
-                  : "truncate text-xs text-muted-foreground"
+          {connectable && canPair ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!canOperate || busy}
+              onClick={() => void run(submission, "connect")}
+            >
+              {pending?.commandId === commandId && pending.action === "connect"
+                ? "Connecting…"
+                : "Connect"}
+            </Button>
+          ) : submission.progress.phase === "failed" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!canOperate || busy}
+              onClick={() => void run(submission, "retry")}
+            >
+              Retry
+            </Button>
+          ) : null}
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  variant="ghost-muted"
+                  size="icon-xs"
+                  disabled={!canOperate || busy}
+                  aria-label={`More actions for ${submission.input.title}`}
+                />
               }
             >
-              {errors[commandId] ||
-                (connectable && !canPair
-                  ? SANDBOX_PAIRING_SCOPE_MESSAGE
-                  : sandboxResourceStatus(submission))}
-            </p>
-          </div>
-          <div className="flex items-center gap-1">
-            {connectable && canPair ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!canOperate || busy}
-                onClick={() => void run(submission, "connect")}
-              >
-                {pending?.commandId === commandId && pending.action === "connect"
-                  ? "Connecting…"
-                  : "Connect"}
-              </Button>
-            ) : submission.progress.phase === "failed" ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!canOperate || busy}
-                onClick={() => void run(submission, "retry")}
-              >
-                Retry
-              </Button>
-            ) : null}
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button
-                    variant="ghost-muted"
-                    size="icon-xs"
-                    disabled={!canOperate || busy}
-                    aria-label={`More actions for ${submission.input.title}`}
-                  />
-                }
-              >
-                <EllipsisIcon className="size-3.5" />
-              </MenuTrigger>
-              <MenuPopup align="end">
-                {submission.progress.phase !== "cancelled" && !submission.intakeStarted ? (
-                  <>
-                    <MenuItem onClick={() => void run(submission, "cancel")}>Cancel setup</MenuItem>
-                    <MenuSeparator />
-                  </>
-                ) : null}
-                {submission.progress.phase !== "running" ? (
-                  <MenuItem variant="destructive" onClick={() => void run(submission, "delete")}>
-                    Delete sandbox
-                  </MenuItem>
-                ) : null}
-              </MenuPopup>
-            </Menu>
-          </div>
-        </div>
+              <EllipsisIcon className="size-3.5" />
+            </MenuTrigger>
+            <MenuPopup align="end">
+              {submission.progress.phase !== "cancelled" && !submission.intakeStarted ? (
+                <>
+                  <MenuItem onClick={() => void run(submission, "cancel")}>Cancel setup</MenuItem>
+                  <MenuSeparator />
+                </>
+              ) : null}
+              {submission.progress.phase !== "running" ? (
+                <MenuItem variant="destructive" onClick={() => void run(submission, "delete")}>
+                  Delete sandbox…
+                </MenuItem>
+              ) : null}
+            </MenuPopup>
+          </Menu>
+        </EnvironmentRow>
       );
     });
 }

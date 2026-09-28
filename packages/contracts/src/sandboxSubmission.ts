@@ -94,7 +94,11 @@ export const SandboxSubmissionRecord = Schema.Struct({
 export type SandboxSubmissionRecord = typeof SandboxSubmissionRecord.Type;
 /** What clients see: the accepted prompt, pinned source and runtime catalog stay on the host. */
 export const SandboxSubmission = Schema.Struct({
-  input: Schema.Struct({ commandId: CommandId, title: TrimmedNonEmptyString }),
+  input: Schema.Struct({
+    commandId: CommandId,
+    title: TrimmedNonEmptyString,
+    configurationId: Schema.String.check(Schema.isUUID(4)),
+  }),
   progress: WorktreeSetupSnapshot,
   destination: Schema.NullOr(SandboxDestination),
   intakeStarted: Schema.Boolean,

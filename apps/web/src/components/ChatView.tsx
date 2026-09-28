@@ -233,6 +233,7 @@ import {
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { sandboxSubmitRejection, useSandboxSubmission } from "./useSandbox";
 import { resolveSandboxProviderEntry, useSandboxComposer } from "./chat/useSandboxComposer";
+import { selectSandboxProviderTarget } from "./settings/settingsScopeNavigation";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -546,6 +547,8 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const SANDBOX_CONTEXT_UNSUPPORTED = "Remove attachments and context to start in a sandbox";
+
 function useDraftHeroLayoutTransition(
   isDraftHeroState: boolean,
   animationsActive: boolean,
@@ -4609,6 +4612,16 @@ export default function ChatView(props: ChatViewProps) {
     if (!interactionModeEnabled) return;
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode, interactionModeEnabled]);
+  const openSandboxSettings = useCallback(() => {
+    if (!sandboxTarget) return;
+    void navigate({
+      to: "/settings/providers",
+      search: selectSandboxProviderTarget(
+        sandboxTarget.ownerEnvironmentId,
+        sandboxTarget.configurationId,
+      ),
+    });
+  }, [navigate, sandboxTarget]);
   const openProviderSetup = useCallback(
     (instanceId: ProviderInstanceId) => {
       void navigate({
@@ -7824,7 +7837,7 @@ export default function ChatView(props: ChatViewProps) {
     if (sandboxSelected && !sandboxLaunch) {
       setThreadError(
         threadIdForSend,
-        sandboxComposer.reason ?? "Select a published branch, account, and model.",
+        sandboxComposer.reason ?? "Select a published branch, account, and model before sending.",
       );
       return;
     }
@@ -7848,7 +7861,7 @@ export default function ChatView(props: ChatViewProps) {
         threadIdForSend,
         sandboxTarget?.ownerEnvironmentId !== environmentId
           ? "The sandbox account no longer belongs to this project environment."
-          : "Sandbox launch currently supports one text prompt and one model without attachments or context.",
+          : SANDBOX_CONTEXT_UNSUPPORTED,
       );
       return;
     }
@@ -10293,10 +10306,12 @@ export default function ChatView(props: ChatViewProps) {
                             sendDisabledReason={
                               sandboxTarget
                                 ? sandboxSetup?.snapshot.phase === "running"
-                                  ? "Setting up sandbox"
+                                  ? "Preparing sandbox"
                                   : sandboxSetup?.snapshot.phase === "failed"
-                                    ? "Retry or discard the failed sandbox"
-                                    : sandboxComposer.reason
+                                    ? "Sandbox setup failed"
+                                    : composerHasNonPromptContent
+                                      ? SANDBOX_CONTEXT_UNSUPPORTED
+                                      : sandboxComposer.reason
                                 : isRevertingCheckpoint
                                   ? "Rewinding conversation"
                                   : feedbackUploading
@@ -10337,7 +10352,13 @@ export default function ChatView(props: ChatViewProps) {
                             interactionMode={interactionMode}
                             lockedProvider={lockedProvider}
                             providerStatuses={providerStatuses as ServerProvider[]}
-                            {...(sandboxTarget ? { sandboxCatalog: sandboxComposer.catalog } : {})}
+                            {...(sandboxTarget
+                              ? {
+                                  sandboxCatalog: sandboxComposer.catalog,
+                                  sandboxCatalogPending: sandboxComposer.loading,
+                                  onOpenSandboxSettings: openSandboxSettings,
+                                }
+                              : {})}
                             {...(sandboxTarget
                               ? {
                                   sandboxFavoriteModels: sandboxComposer.favoriteModels,

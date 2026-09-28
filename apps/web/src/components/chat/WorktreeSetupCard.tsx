@@ -18,6 +18,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
@@ -434,11 +435,13 @@ export function WorktreeSetupCard({
         ) : null}
         {onRetry && snapshot.phase === "failed" ? (
           <Button type="button" size="xs" variant="ghost-muted" onClick={onRetry}>
+            <RefreshIcon />
             Retry
           </Button>
         ) : null}
         {onDiscard && snapshot.phase === "failed" ? (
           <Button type="button" size="xs" variant="ghost-muted" onClick={onDiscard}>
+            <XIcon aria-hidden />
             Discard
           </Button>
         ) : null}

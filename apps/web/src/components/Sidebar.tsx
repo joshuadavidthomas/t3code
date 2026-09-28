@@ -718,6 +718,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   const setupPending = useComposerDraftStore((store) =>
     isDraftDiscardLocked(store.getDraftSession(draftId)?.sandboxSetup),
   );
+  const setupFailed = useComposerDraftStore(
+    (store) => store.getDraftSession(draftId)?.sandboxSetup?.snapshot.phase === "failed",
+  );
   const promptPreview =
     replaceComposerContextReferences(
       composer.prompt || session.sandboxSetup?.prompt || "",
@@ -790,23 +793,41 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
               {props.projectDisplayName}
             </span>
-            <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label="Discard draft"
-                      disabled={setupPending}
-                      onClick={handleDiscard}
-                      className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  }
-                />
-                <TooltipPopup side="top">Discard draft</TooltipPopup>
-              </Tooltip>
+            <span className="relative ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end text-xs">
+              {/* A sandbox setup reads like a thread's status: Working while it
+                  runs, Failed until retried or discarded (the hover action). */}
+              {setupPending ? (
+                <span className="inline-flex items-center gap-1 font-medium text-sky-600 dark:text-sky-400">
+                  <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+                  <span role="status">Working</span>
+                </span>
+              ) : setupFailed ? (
+                <span className="pointer-events-none inline-flex items-center gap-1 font-medium text-red-700 transition-opacity group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0 group-has-[:focus-visible]/sidebar-row:absolute group-has-[:focus-visible]/sidebar-row:right-0 group-has-[:focus-visible]/sidebar-row:opacity-0 dark:text-red-300">
+                  <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
+                  <span role="status">Failed</span>
+                </span>
+              ) : null}
+              {setupPending ? null : (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label="Discard draft"
+                        onClick={handleDiscard}
+                        className={cn(
+                          "pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
+                          setupFailed &&
+                            "absolute inset-y-0 right-0 focus-visible:static group-hover/sidebar-row:static",
+                        )}
+                      >
+                        <XIcon className="size-3" />
+                      </button>
+                    }
+                  />
+                  <TooltipPopup side="top">Discard draft</TooltipPopup>
+                </Tooltip>
+              )}
             </span>
           </div>
           <div aria-hidden className="mt-0.5 truncate text-sm font-medium text-foreground/90">

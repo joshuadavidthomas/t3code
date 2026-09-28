@@ -215,6 +215,19 @@ describe("resolveBranchToolbarValue", () => {
 });
 
 describe("resolveBranchTriggerLabel", () => {
+  it("names the branch a sandbox draft will clone as its base", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "local",
+        resolvedActiveBranch: "feature/x",
+        resolvedActiveBranchIsRemote: false,
+        startFromOrigin: true,
+        sandboxDraft: true,
+      }),
+    ).toBe("From feature/x");
+  });
+
   it("shows the origin ref when a new worktree will start from origin", () => {
     expect(
       resolveBranchTriggerLabel({

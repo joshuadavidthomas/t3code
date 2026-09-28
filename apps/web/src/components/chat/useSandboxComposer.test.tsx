@@ -226,6 +226,10 @@ describe("useSandboxComposer", () => {
         personalId,
         workId,
       ]);
+      expect(value.registrations.map((entry) => [entry.label, entry.providerLabel])).toEqual([
+        ["Personal", "Sprites"],
+        ["Work", "Sprites"],
+      ]);
       expect(value.favoriteModels.get(instanceId)).toEqual(["alpha"]);
       const personalSave = value.updateFavoriteModels(instanceId, ["beta"]);
       await act(async () => renderer.update(render(target(workId))));
@@ -341,19 +345,19 @@ describe("useSandboxComposer", () => {
         );
       });
       expect(value.catalog).toEqual([]);
-      expect(value.reason).toBe("Loading sandbox models…");
+      expect(value.reason).toBe("Sandbox models loading");
       await act(async () => {
         registry.set(
           launch,
           AsyncResult.success({ configurationRevision: 4, runtime: null, reason: null }),
         );
       });
-      expect(value.reason).toBe("Sandbox runtime unavailable.");
+      expect(value.reason).toBe("Sandbox runtime unavailable");
       await act(async () => {
         registry.set(configurations(ownerId), AsyncResult.success([]));
       });
       expect(value.catalog).toEqual([]);
-      expect(value.reason).toBe("Sandbox account unavailable.");
+      expect(value.reason).toBe("Sandbox account unavailable");
       expect(value.registrations.map((entry) => entry.configurationId)).toEqual([workId]);
     } finally {
       await act(async () => renderer.unmount());
