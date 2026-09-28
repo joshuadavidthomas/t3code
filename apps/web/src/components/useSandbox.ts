@@ -72,7 +72,10 @@ export function sandboxSubmitRejection(result: AtomCommandResult<unknown, unknow
   const failure = squashAtomCommandFailure(result);
   const code =
     typeof failure === "object" && failure !== null && "code" in failure ? failure.code : null;
-  if (code !== "invalid" && code !== "conflict" && code !== "unsupported") return null;
+  // The server decided before accepting; only a storage failure or a lost
+  // response leaves acceptance unknown, and those keep the card for Retry.
+  if (code !== "invalid" && code !== "conflict" && code !== "unsupported" && code !== "unavailable")
+    return null;
   return failure instanceof Error ? failure.message : "Failed to send message.";
 }
 

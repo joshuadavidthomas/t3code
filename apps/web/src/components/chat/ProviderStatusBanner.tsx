@@ -100,32 +100,59 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const isWarning = status.status === "warning" || incompatible !== null;
 
   return (
+    <ProviderStatusAlert
+      title={title}
+      message={message}
+      variant={isWarning ? "warning" : "error"}
+      role={incompatible && incompatible.status !== "broken" ? "status" : "alert"}
+      dismissLabel={`Dismiss ${providerName} provider ${status.status}`}
+      onDismiss={onDismiss}
+      onOpenSetup={
+        onOpenProviderSetup && hasProviderSetup(status)
+          ? () => onOpenProviderSetup(status.instanceId)
+          : undefined
+      }
+    />
+  );
+});
+
+/** The banner's presentation, shared by host providers and sandbox account providers. */
+export function ProviderStatusAlert(props: {
+  title: string;
+  message: string;
+  variant: "warning" | "error";
+  role: "status" | "alert";
+  dismissLabel: string;
+  onDismiss: () => void;
+  onOpenSetup?: (() => void) | undefined;
+}) {
+  return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[calc(100%-2rem)] pt-3">
       <Alert
-        variant={isWarning ? "warning" : "error"}
-        role={incompatible && incompatible.status !== "broken" ? "status" : "alert"}
+        variant={props.variant}
+        role={props.role}
         surface="glass"
         controlAlignment="first-line"
       >
         <InfoIcon />
-        <AlertTitle>{title}</AlertTitle>
+        <AlertTitle>{props.title}</AlertTitle>
         <AlertDescription>
           <Tooltip>
-            <TooltipTrigger render={<div className="line-clamp-3" />}>{message}</TooltipTrigger>
+            <TooltipTrigger render={<div className="line-clamp-3" />}>
+              {props.message}
+            </TooltipTrigger>
             <TooltipPopup side="top" className="whitespace-pre-wrap">
-              {message}
+              {props.message}
             </TooltipPopup>
           </Tooltip>
-          {onOpenProviderSetup && hasProviderSetup(status) ? (
-            <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
-              Open provider setup
-            </InlineButton>
+          {props.onOpenSetup ? (
+            <InlineButton onClick={props.onOpenSetup}>Open provider setup</InlineButton>
           ) : null}
         </AlertDescription>
         <AlertAction>
           <Button
-            aria-label={`Dismiss ${providerName} provider ${status.status}`}
-            onClick={onDismiss}
+            aria-label={props.dismissLabel}
+            onClick={props.onDismiss}
             size="icon-xs"
             variant="ghost-muted"
           >
@@ -135,4 +162,4 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
       </Alert>
     </div>
   );
-});
+}

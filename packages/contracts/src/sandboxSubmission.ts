@@ -16,9 +16,12 @@ import { WorktreeSetupSnapshot } from "./worktreeSetup.ts";
 
 /** A capability distinct from the orchestration protocol: older runtimes cannot accept intake. */
 export const SANDBOX_INTAKE_VERSION = 1;
-export const SandboxRuntimeManifest = Schema.Struct({
+/**
+ * The models a sandbox offers. The host computes it from its own code, so the
+ * composer never waits on a download; `id` hashes only this catalog.
+ */
+export const SandboxRuntimeCatalog = Schema.Struct({
   id: TrimmedNonEmptyString,
-  artifactIntegrity: TrimmedNonEmptyString,
   orchestrationProtocol: Schema.Int,
   intakeVersion: Schema.Int,
   providers: Schema.Array(
@@ -31,6 +34,12 @@ export const SandboxRuntimeManifest = Schema.Struct({
       models: Schema.Array(ServerProviderModel),
     }),
   ),
+});
+export type SandboxRuntimeCatalog = typeof SandboxRuntimeCatalog.Type;
+/** A built artifact's sidecar: its catalog plus the archive it describes. */
+export const SandboxRuntimeManifest = Schema.Struct({
+  ...SandboxRuntimeCatalog.fields,
+  artifactIntegrity: TrimmedNonEmptyString,
 });
 export type SandboxRuntimeManifest = typeof SandboxRuntimeManifest.Type;
 
@@ -51,13 +60,14 @@ export const SandboxSubmitInput = Schema.Struct({
 });
 export type SandboxSubmitInput = typeof SandboxSubmitInput.Type;
 
-/** Resolved by the host, never supplied as a trusted commit by a browser. */
+/** Resolved by the host, never supplied as a trusted commit by a browser. The host
+ * seeds the sandbox with this commit, so it needs no access to the remote. */
 export const SandboxPinnedSource = Schema.Struct({
-  repositoryUrl: Schema.String.check(
-    Schema.isPattern(/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
-  ),
+  /** The project's origin without credentials, kept as the sandbox's origin. */
+  repositoryUrl: Schema.NullOr(TrimmedNonEmptyString),
   commit: Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/)),
   branch: TrimmedNonEmptyString,
+  projectTitle: Schema.optional(TrimmedNonEmptyString),
 });
 export type SandboxPinnedSource = typeof SandboxPinnedSource.Type;
 
@@ -151,7 +161,7 @@ export const SandboxLaunchOptionsInput = Schema.Struct({
 });
 export const SandboxLaunchOptions = Schema.Struct({
   configurationRevision: Schema.Int,
-  runtime: Schema.NullOr(SandboxRuntimeManifest),
+  runtime: Schema.NullOr(SandboxRuntimeCatalog),
   reason: Schema.NullOr(Schema.String),
 });
 export type SandboxLaunchOptions = typeof SandboxLaunchOptions.Type;

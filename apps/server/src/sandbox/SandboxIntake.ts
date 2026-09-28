@@ -162,10 +162,13 @@ export const makeSandboxIntake = Effect.fnUntraced(function* (deps: SandboxIntak
         type: "project.create",
         commandId: commandId(id, "project-create"),
         projectId: input.projectId,
-        title: submission.source.repositoryUrl
-          .split("/")
-          .at(-1)!
-          .replace(/\.git$/, ""),
+        title:
+          submission.source.projectTitle ??
+          submission.source.repositoryUrl
+            ?.split(/[/:]/)
+            .at(-1)
+            ?.replace(/\.git$/, "") ??
+          "project",
         workspaceRoot: input.workspaceRoot,
         createdAt: submission.acceptedAt,
       },

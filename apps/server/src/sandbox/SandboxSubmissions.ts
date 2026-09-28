@@ -5,9 +5,11 @@ import {
   SandboxSubmissionRecord,
   SandboxSubmissionError,
   SandboxSubmitInput,
+  sandboxInstanceHasCredential,
   type CommandId,
   type SandboxLaunchOptions,
   type SandboxDestinationConnection,
+  type SandboxRuntimeCatalog,
   type SandboxRuntimeManifest,
   type SandboxSubmission,
   type SandboxSubmissionListEvent,
@@ -32,6 +34,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { SandboxConfigurations } from "./SandboxConfiguration.ts";
 import { makeConfiguredSandboxProvisioner } from "./SandboxProvisioner.ts";
+import { SANDBOX_RELEASE_VERSION } from "./SandboxArtifact.ts";
 import { validateSandboxSelection } from "./SandboxRuntime.ts";
 
 const CapturedSecrets = Schema.Struct({
@@ -48,9 +51,16 @@ export const SANDBOX_PROVISION_STAGES = [
   "connect",
 ] as const satisfies ReadonlyArray<WorktreeSetupStageId>;
 
+/** Packs the pinned commit from the host project for providers to seed a sandbox with. */
+export type SandboxSourcePacker = (
+  submission: SandboxSubmissionRecord,
+) => Effect.Effect<Uint8Array, SandboxSubmissionError>;
+
 /** Every operation must reconcile by commandId before creating external state.
  * A retry can repeat a completed call whose acknowledgement was lost. */
 export interface SandboxProvisioner {
+  /** Offered before any download; the artifact must carry the same catalog id. */
+  readonly catalog: SandboxRuntimeCatalog;
   readonly runtime: SandboxRuntimeManifest | null;
   readonly getRuntime?: Effect.Effect<SandboxRuntimeManifest | null>;
   readonly resolveSource: (
@@ -225,8 +235,7 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
     submission: SandboxSubmissionRecord,
     credential?: string,
   ) {
-    if (!provisioner)
-      return yield* failure("unsupported", "No compatible sandbox runtime is configured.");
+    if (!provisioner) return yield* failure("unsupported", "This server can't launch sandboxes.");
     const cancel = provisioner.cancel;
     yield* credential === undefined
       ? withResourceCredential(submission, yield* capturedOption(id), (value) =>
@@ -255,8 +264,7 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
   const process = Effect.fnUntraced(function* (id: CommandId) {
     let value = yield* get(id);
     if (value.deletedAt || value.progress.phase !== "running") return;
-    if (!provisioner)
-      return yield* failure("unsupported", "No compatible sandbox runtime is configured.");
+    if (!provisioner) return yield* failure("unsupported", "This server can't launch sandboxes.");
     if (value.cancelRequested) {
       yield* cancelAndForget(id, value);
       yield* update(id, (current, at) => ({
@@ -372,13 +380,10 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
     const values = yield* configurations.read.pipe(Effect.mapError(storageFailure));
     const account = values.find((value) => value.id === configurationId);
     if (!account) return yield* failure("invalid", "Sandbox configuration does not exist.");
-    const runtime = provisioner?.getRuntime
-      ? yield* provisioner.getRuntime
-      : (provisioner?.runtime ?? null);
     return {
       configurationRevision: account.revision,
-      runtime,
-      reason: runtime ? null : "No compatible sandbox runtime is configured.",
+      runtime: provisioner?.catalog ?? null,
+      reason: provisioner ? null : "This server can't launch sandboxes.",
     };
   });
   const replay = Effect.fnUntraced(function* (decoded: SandboxSubmitInput) {
@@ -396,11 +401,22 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
     if (replayed) return replayed;
     // Runtime downloads and source resolution stay outside the lock so one slow
     // launch never stalls progress, cancellation or listing for the others.
-    const runtime = provisioner?.getRuntime
-      ? yield* provisioner.getRuntime
-      : (provisioner?.runtime ?? null);
-    if (!provisioner || !runtime || decoded.runtimeId !== runtime.id)
-      return yield* failure("unsupported", "No compatible sandbox runtime is configured.");
+    if (!provisioner) return yield* failure("unsupported", "This server can't launch sandboxes.");
+    if (decoded.runtimeId !== provisioner.catalog.id)
+      return yield* failure("conflict", "Sandbox models changed. Choose a model again.");
+    // The composer showed the host's catalog; the launch is checked against the
+    // artifact that will actually run, before any Sprite exists.
+    const runtime = provisioner.getRuntime ? yield* provisioner.getRuntime : provisioner.runtime;
+    if (!runtime)
+      return yield* failure(
+        "unavailable",
+        `Couldn't download the T3 Code server (v${SANDBOX_RELEASE_VERSION}) that runs inside the sandbox.`,
+      );
+    if (runtime.id !== provisioner.catalog.id)
+      return yield* failure(
+        "unsupported",
+        "The T3 Code server build for the sandbox doesn't match this server's models.",
+      );
     const capture = yield* configurations
       .capture(decoded.configurationId, decoded.expectedRevision)
       .pipe(
@@ -414,12 +430,20 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
       decoded.modelSelection,
       decoded.interactionMode,
     );
-    const source = yield* provisioner.resolveSource(decoded).pipe(
-      Effect.flatMap(decodeSource),
-      Effect.mapError(() => failure("invalid", "Unable to resolve published project source.")),
-    );
-    if (source.branch !== decoded.branch)
-      return yield* failure("invalid", "Resolved source branch does not match.");
+    // Fail here rather than minutes later when the agent starts on the Sprite.
+    if (
+      !sandboxInstanceHasCredential(capture.providerInstances[decoded.modelSelection.instanceId]!)
+    )
+      return yield* failure("invalid", "Sandbox provider credential required.");
+    const source = yield* provisioner
+      .resolveSource(decoded)
+      .pipe(
+        Effect.flatMap((value) =>
+          decodeSource(value).pipe(
+            Effect.mapError(() => failure("invalid", "Unable to resolve project source.")),
+          ),
+        ),
+      );
     const accepted = yield* lock.withPermits(1)(
       Effect.gen(function* () {
         const previous = yield* replay(decoded);

@@ -41,6 +41,47 @@ export const SANDBOX_PROVIDER_LABELS: Record<SandboxConfiguration["provider"], s
   sprites: "Sprites",
 };
 
+/**
+ * Sandboxes have no interactive login, so an agent needs one of these variables
+ * on its provider instance before a launch. Drivers without an entry have no
+ * known requirement.
+ */
+export const SANDBOX_DRIVER_CREDENTIALS: Readonly<
+  Record<string, { readonly variables: readonly string[] }>
+> = {
+  // The first variable is the one Settings writes; the rest are also accepted.
+  claudeAgent: { variables: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"] },
+};
+
+/** Stored values arrive redacted on clients, so a redaction marker counts as set. */
+export function sandboxInstanceHasCredential(instance: ProviderInstanceConfig): boolean {
+  const credential = SANDBOX_DRIVER_CREDENTIALS[instance.driver];
+  if (!credential) return true;
+  return (instance.environment ?? []).some(
+    (variable) =>
+      credential.variables.includes(variable.name) &&
+      (variable.valueRedacted === true || variable.value.trim() !== ""),
+  );
+}
+
+/** Stores a pasted token as the driver's primary credential variable, marked sensitive. */
+export function withSandboxCredential(
+  instance: ProviderInstanceConfig,
+  value: string,
+): ProviderInstanceConfig {
+  const name = SANDBOX_DRIVER_CREDENTIALS[instance.driver]?.variables[0];
+  const trimmed = value.trim();
+  if (!name || !trimmed) return instance;
+  const entry = { name, value: trimmed, sensitive: true };
+  const environment = instance.environment ?? [];
+  return {
+    ...instance,
+    environment: environment.some((variable) => variable.name === name)
+      ? environment.map((variable) => (variable.name === name ? entry : variable))
+      : [...environment, entry],
+  };
+}
+
 export const SandboxConfigurationSaveInput = Schema.Struct({
   id: Schema.optionalKey(Schema.String.check(Schema.isUUID(4))),
   provider: Schema.Literal("sprites"),

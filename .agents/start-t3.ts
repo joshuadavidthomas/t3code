@@ -25,6 +25,13 @@ if (!NodeFS.existsSync(tokenPath)) {
 const token = NodeFS.readFileSync(tokenPath, "utf8").trim();
 if (!/^[a-f0-9]{64}$/.test(token)) throw new Error("Invalid local orb portal credential");
 
+// A sandbox launch uploads a Linux build of this checkout; build it into
+// .t3/sandbox-runtime (see docs/operations/release.md) to launch from the portal.
+const sandboxRuntimeDir = NodePath.join(home, "sandbox-runtime");
+const sandboxRuntimeArchive = NodeFS.existsSync(sandboxRuntimeDir)
+  ? NodeFS.readdirSync(sandboxRuntimeDir).find((name) => name.endsWith("-linux-x64.tar.gz"))
+  : undefined;
+
 const child = NodeChildProcess.spawn(
   "vp",
   [
@@ -43,6 +50,11 @@ const child = NodeChildProcess.spawn(
       T3CODE_PORT_OFFSET: String(PORT_OFFSET),
       T3CODE_BUNDLED_DEV: "0",
       T3CODE_DEV_AUTH_TOKEN: token,
+      ...(sandboxRuntimeArchive && !process.env.T3CODE_SANDBOX_RUNTIME_ARCHIVE
+        ? {
+            T3CODE_SANDBOX_RUNTIME_ARCHIVE: NodePath.join(sandboxRuntimeDir, sandboxRuntimeArchive),
+          }
+        : {}),
     },
   },
 );

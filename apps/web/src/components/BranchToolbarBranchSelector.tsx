@@ -258,6 +258,7 @@ export function BranchToolbarBranchSelector({
     }),
     [branchCwd, branchRefQuery, environmentId],
   );
+  const sandboxDraft = !hasServerThread && draftThread?.sandboxTarget != null;
   const branchRefState = usePaginatedBranches(branchRefTarget);
   const refs = branchRefState.refs;
   const hasNextPage =
@@ -276,6 +277,7 @@ export function BranchToolbarBranchSelector({
     activeWorktreePath,
     activeThreadBranch,
     currentGitBranch,
+    sandboxDraft,
   });
   const branchNames = useMemo(() => refs.map((refName) => refName.name), [refs]);
   const branchByName = useMemo(
@@ -286,7 +288,6 @@ export function BranchToolbarBranchSelector({
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
-  const sandboxDraft = !hasServerThread && draftThread?.sandboxTarget != null;
   const isSelectingBase = isSelectingBranchBase({
     effectiveEnvMode,
     envLocked,
@@ -517,7 +518,7 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  // Default the worktree base to the repo default branch (origin/HEAD), only
+  // Default the worktree or sandbox base to the repo default branch (origin/HEAD), only
   // falling back to the checked-out branch when no default is known.
   const defaultBranchName = useMemo(
     () => refs.find((refName) => refName.isDefault)?.name ?? null,
@@ -529,7 +530,7 @@ export function BranchToolbarBranchSelector({
 
   useEffect(() => {
     if (
-      effectiveEnvMode !== "worktree" ||
+      (effectiveEnvMode !== "worktree" && !sandboxDraft) ||
       activeWorktreePath ||
       activeThreadBranch ||
       !worktreeBaseBranchCandidate
@@ -541,6 +542,7 @@ export function BranchToolbarBranchSelector({
     activeThreadBranch,
     activeWorktreePath,
     effectiveEnvMode,
+    sandboxDraft,
     setThreadBranch,
     worktreeBaseBranchCandidate,
   ]);

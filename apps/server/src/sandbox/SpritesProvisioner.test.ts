@@ -110,6 +110,7 @@ it.effect(
         makeSpritesProvisioner(
           { runtime, archivePath: "/unused" },
           () => Effect.succeed(submission.source),
+          () => Effect.succeed(new Uint8Array()),
           () => Effect.succeed(client),
         );
       const prefixed = { ...captured, namePrefix: "orb-" };
@@ -150,6 +151,7 @@ it.effect(
       const provisioner = yield* makeSpritesProvisioner(
         null,
         () => Effect.succeed(submission.source),
+        () => Effect.succeed(new Uint8Array()),
         (credential) => {
           expect(credential).toBe(captured.credential);
           return Effect.succeed(client);
@@ -182,6 +184,8 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     const uploads: string[] = [];
     const controlScripts: string[] = [];
     const deployments: string[] = [];
+    const packs: Uint8Array[] = [];
+    const seedScripts: string[] = [];
     let mismatch = true;
     const client: SpritesClient = {
       find: () => Effect.succeed(null),
@@ -191,10 +195,11 @@ it.effect("verifies the runtime before starting intake and preserves the destina
         Effect.sync(() => {
           operations.push("public");
         }),
-      upload: (_name, path) =>
+      upload: (_name, path, body) =>
         Effect.sync(() => {
           operations.push("upload");
           uploads.push(path);
+          if (path.endsWith(".pack")) packs.push(body);
         }),
       putService: () =>
         Effect.sync(() => {
@@ -203,6 +208,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
       exec: (_name, script, input) =>
         Effect.sync(() => {
           if (script.includes("sandbox-runtime.json")) deployments.push(input);
+          if (script.includes("index-pack")) seedScripts.push(script);
           if (script.includes("sandbox-runtime-manifest"))
             return encode(mismatch ? { ...runtime, id: "wrong" } : runtime);
           if (script.includes("/api/sandbox/runtime")) return encode(runtime);
@@ -223,6 +229,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     const provisioner = yield* makeSpritesProvisioner(
       { runtime: { ...runtime, id: "current-runtime" }, archivePath },
       () => Effect.succeed(submission.source),
+      () => Effect.succeed(new Uint8Array([4, 5, 6])),
       (credential) => {
         expect(credential).toBe(captured.credential);
         return Effect.succeed(client);
@@ -242,7 +249,11 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     expect(yield* provisioner.intake(submission, captured)).toEqual(destination);
     const resources = yield* SandboxResources.SandboxResources;
     expect((yield* resources.get(submission.input.commandId)).destination).toEqual(destination);
-    expect(operations).toEqual(["upload", "upload", "service", "public", "intake"]);
+    expect(operations).toEqual(["upload", "upload", "upload", "service", "public", "intake"]);
+    expect(packs).toEqual([new Uint8Array([4, 5, 6])]);
+    expect(seedScripts).toHaveLength(1);
+    expect(seedScripts[0]).toContain(`checkout -q -B 'main' '${"a".repeat(40)}'`);
+    expect(seedScripts[0]).toContain("remote add origin 'https://github.com/example/repo'");
     expect(controlScripts).toHaveLength(1);
     expect(deployments).toHaveLength(1);
     expect(deployments[0]).toContain(`"label":${encode(submission.input.title)}`);
@@ -250,7 +261,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     expect(controlScripts[0]).toContain("--replace-active");
     expect(controlScripts[0]).toContain("flock 9");
     expect(controlScripts[0]).not.toContain("control-bearer");
-    expect(uploads).toHaveLength(2);
+    expect(uploads).toHaveLength(3);
     expect(uploads[0]).not.toBe(uploads[1]);
     const paired = yield* provisioner.pair(submission, captured);
     const pairedAgain = yield* provisioner.pair(submission, captured);

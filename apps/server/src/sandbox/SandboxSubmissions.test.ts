@@ -72,6 +72,7 @@ const source = {
   commit: "1234567890abcdef1234567890abcdef12345678",
 };
 const baseProvisioner: SandboxProvisioner = {
+  catalog: runtime,
   runtime,
   resolveSource: () => Effect.succeed(source),
   stage: () => Effect.void,
@@ -208,6 +209,52 @@ it.effect(
       expect(rows[0]?.body).not.toContain("personal-provider-key");
       expect(done.progress.sequence).toBeGreaterThan(accepted.progress.sequence);
     }).pipe(Effect.scoped, Effect.provide(dependencies)),
+);
+
+it.effect("rejects a launch before provisioning when the agent has no credential", () =>
+  Effect.gen(function* () {
+    const { configurations, account, input } = yield* setup;
+    const saved = yield* configurations.saveProviderInstance({
+      id: account.id,
+      expectedRevision: account.revision,
+      instanceId,
+      instance: { driver, enabled: true },
+    });
+    const stages: string[] = [];
+    const service = yield* makeSandboxSubmissions(configurations, {
+      ...baseProvisioner,
+      stage: (stage) => Effect.sync(() => void stages.push(stage)),
+    });
+    const error = yield* Effect.flip(
+      service.submit({ ...input, expectedRevision: saved.revision }),
+    );
+    expect(error.code).toBe("invalid");
+    expect(stages).toEqual([]);
+    expect(yield* service.list).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(dependencies)),
+);
+
+it.effect("offers models before the runtime is available and refuses the launch until it is", () =>
+  Effect.gen(function* () {
+    const { configurations, account, input } = yield* setup;
+    const stages: string[] = [];
+    const missing = yield* makeSandboxSubmissions(configurations, {
+      ...baseProvisioner,
+      runtime: null,
+      stage: (stage) => Effect.sync(() => void stages.push(stage)),
+    });
+    expect((yield* missing.launchOptions(account.id)).runtime?.id).toBe(runtime.id);
+    expect((yield* Effect.flip(missing.submit(input))).code).toBe("unavailable");
+
+    const mismatched = yield* makeSandboxSubmissions(configurations, {
+      ...baseProvisioner,
+      runtime: { ...runtime, id: "other-build" },
+      stage: (stage) => Effect.sync(() => void stages.push(stage)),
+    });
+    expect((yield* Effect.flip(mismatched.submit(input))).code).toBe("unsupported");
+    expect(stages).toEqual([]);
+    expect(yield* missing.list).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(dependencies)),
 );
 
 it.effect("settles a submission as failed when a setup stage defects", () =>

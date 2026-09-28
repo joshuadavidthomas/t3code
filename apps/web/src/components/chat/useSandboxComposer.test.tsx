@@ -5,7 +5,7 @@ import {
   ProviderInstanceId,
   type SandboxConfiguration,
   type SandboxLaunchOptions,
-  type SandboxRuntimeManifest,
+  type SandboxRuntimeCatalog,
 } from "@t3tools/contracts";
 import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -65,7 +65,6 @@ const model = (slug: string, isCustom = false) => ({
 const runtime = (id: string, models = [model("alpha"), model("beta")]) =>
   ({
     id,
-    artifactIntegrity: "sha256:runtime",
     orchestrationProtocol: 1,
     intakeVersion: 1,
     providers: [
@@ -76,7 +75,7 @@ const runtime = (id: string, models = [model("alpha"), model("beta")]) =>
         models,
       },
     ],
-  }) satisfies SandboxRuntimeManifest;
+  }) satisfies SandboxRuntimeCatalog;
 
 const configuration = (
   id: string,
@@ -352,7 +351,9 @@ describe("useSandboxComposer", () => {
           AsyncResult.success({ configurationRevision: 4, runtime: null, reason: null }),
         );
       });
-      expect(value.reason).toBe("Sandbox runtime unavailable");
+      expect(value.reason).toBe("Sandboxes unavailable");
+      // Nothing in Settings fixes a server that cannot launch sandboxes, so no settings link.
+      expect(value.reasonFix).toBeNull();
       await act(async () => {
         registry.set(configurations(ownerId), AsyncResult.success([]));
       });

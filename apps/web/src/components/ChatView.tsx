@@ -395,6 +395,7 @@ import {
 } from "./BranchToolbar.logic";
 import {
   getProviderStatusBannerKey,
+  ProviderStatusAlert,
   ProviderStatusBanner,
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
@@ -2906,6 +2907,11 @@ export default function ChatView(props: ChatViewProps) {
     selectedProviderByThreadId,
     lockedProvider,
   );
+  const sandboxReason =
+    sandboxComposer.reason ??
+    (sandboxProvider && sandboxComposer.credentialMissing(sandboxProvider.instanceId)
+      ? `${sandboxProvider.displayName} not authenticated`
+      : null);
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: sandboxSelected ? sandboxProvider : activeProviderStatus,
@@ -3754,13 +3760,30 @@ export default function ChatView(props: ChatViewProps) {
       setDismissedProviderStatusBannerKey(null);
     }
   }, [dismissedProviderStatusBannerKey, providerStatusBannerKey]);
-  const visibleProviderStatus = shouldShowProviderStatusBanner(
-    activeProviderStatus,
-    dismissedProviderStatusBannerKey,
-  )
-    ? activeProviderStatus
-    : null;
-  const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
+  // A sandbox draft runs on the account's providers, so the host's status does not apply.
+  const visibleProviderStatus =
+    !sandboxSelected &&
+    shouldShowProviderStatusBanner(activeProviderStatus, dismissedProviderStatusBannerKey)
+      ? activeProviderStatus
+      : null;
+  const sandboxCredentialBannerKey =
+    sandboxSelected &&
+    sandboxProvider &&
+    sandboxComposer.credentialMissing(sandboxProvider.instanceId)
+      ? `${sandboxTarget?.configurationId ?? ""}:${sandboxProvider.instanceId}`
+      : null;
+  const [dismissedSandboxCredentialBannerKey, setDismissedSandboxCredentialBannerKey] = useState<
+    string | null
+  >(null);
+  const visibleSandboxCredentialProvider =
+    sandboxCredentialBannerKey !== null &&
+    sandboxCredentialBannerKey !== dismissedSandboxCredentialBannerKey
+      ? sandboxProvider
+      : null;
+  const hasTimelineTopBanner =
+    Boolean(visibleThreadError) ||
+    visibleProviderStatus !== null ||
+    visibleSandboxCredentialProvider != null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -3983,6 +4006,9 @@ export default function ChatView(props: ChatViewProps) {
         loadBalancedEnvironmentId: null,
         worktreePath: null,
         envMode: "local",
+        // The checkout's branch may exist only locally; the branch picker
+        // fills in origin's default, like a new worktree's base.
+        ...(sandboxTarget ? {} : { branch: null }),
       });
       setMultipleModelSelections(null);
     },
@@ -3991,6 +4017,7 @@ export default function ChatView(props: ChatViewProps) {
       draftId,
       envLocked,
       logicalProjectEnvironments,
+      sandboxTarget,
       setDraftThreadContext,
       setMultipleModelSelections,
     ],
@@ -4622,6 +4649,9 @@ export default function ChatView(props: ChatViewProps) {
       ),
     });
   }, [navigate, sandboxTarget]);
+  const openConnectionSettings = useCallback(() => {
+    void navigate({ to: "/settings/connections" });
+  }, [navigate]);
   const openProviderSetup = useCallback(
     (instanceId: ProviderInstanceId) => {
       void navigate({
@@ -7834,10 +7864,10 @@ export default function ChatView(props: ChatViewProps) {
             revision: sandboxComposer.configurationRevision,
           }
         : null;
-    if (sandboxSelected && !sandboxLaunch) {
+    if (sandboxSelected && (!sandboxLaunch || sandboxReason)) {
       setThreadError(
         threadIdForSend,
-        sandboxComposer.reason ?? "Select a published branch, account, and model before sending.",
+        sandboxReason ?? "Select a branch, account, and model before sending.",
       );
       return;
     }
@@ -8536,6 +8566,10 @@ export default function ChatView(props: ChatViewProps) {
           return next.length === existing.length ? existing : next;
         });
         setThreadError(threadIdForSend, rejection);
+        // Like a failed ordinary first send, a refused launch returns to the draft hero.
+        setDockedDraftHeroThreadKey((currentThreadKey) =>
+          currentThreadKey === activeThreadKey ? null : currentThreadKey,
+        );
       }
       return;
     }
@@ -10081,6 +10115,19 @@ export default function ChatView(props: ChatViewProps) {
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
                 onOpenProviderSetup={openProviderSetup}
               />
+              {visibleSandboxCredentialProvider ? (
+                <ProviderStatusAlert
+                  title={`${visibleSandboxCredentialProvider.displayName} is unauthenticated`}
+                  message="Open provider setup to connect a subscription or add an API key."
+                  variant="error"
+                  role="alert"
+                  dismissLabel={`Dismiss ${visibleSandboxCredentialProvider.displayName} provider status`}
+                  onDismiss={() =>
+                    setDismissedSandboxCredentialBannerKey(sandboxCredentialBannerKey)
+                  }
+                  onOpenSetup={openSandboxSettings}
+                />
+              ) : null}
               <ThreadErrorBanner
                 error={visibleThreadError}
                 onDismiss={() => {
@@ -10311,7 +10358,7 @@ export default function ChatView(props: ChatViewProps) {
                                     ? "Sandbox setup failed"
                                     : composerHasNonPromptContent
                                       ? SANDBOX_CONTEXT_UNSUPPORTED
-                                      : sandboxComposer.reason
+                                      : sandboxReason
                                 : isRevertingCheckpoint
                                   ? "Rewinding conversation"
                                   : feedbackUploading
@@ -10356,7 +10403,19 @@ export default function ChatView(props: ChatViewProps) {
                               ? {
                                   sandboxCatalog: sandboxComposer.catalog,
                                   sandboxCatalogPending: sandboxComposer.loading,
-                                  onOpenSandboxSettings: openSandboxSettings,
+                                  sandboxUnavailableReason: sandboxComposer.reason,
+                                  sandboxSetupAction:
+                                    sandboxComposer.reasonFix === "providers"
+                                      ? {
+                                          label: "Open provider settings",
+                                          open: openSandboxSettings,
+                                        }
+                                      : sandboxComposer.reasonFix === "account"
+                                        ? {
+                                            label: "Open connection settings",
+                                            open: openConnectionSettings,
+                                          }
+                                        : null,
                                 }
                               : {})}
                             {...(sandboxTarget

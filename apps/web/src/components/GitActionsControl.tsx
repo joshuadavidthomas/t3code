@@ -1098,9 +1098,11 @@ export default function GitActionsControl({
     !activeServerThread &&
     activeDraftThread?.envMode === "worktree" &&
     activeDraftThread.worktreePath === null;
+  // A sandbox draft's branch names what the Sprite clones, not the local checkout.
+  const isSandboxDraft = !activeServerThread && activeDraftThread?.sandboxTarget != null;
 
   useEffect(() => {
-    if (isGitActionRunning || isSelectingWorktreeBase || activeServerThread) {
+    if (isGitActionRunning || isSelectingWorktreeBase || isSandboxDraft || activeServerThread) {
       return;
     }
 
@@ -1118,6 +1120,7 @@ export default function GitActionsControl({
     activeDraftThread?.branch,
     gitStatusForActions,
     isGitActionRunning,
+    isSandboxDraft,
     isSelectingWorktreeBase,
     persistThreadBranchSync,
   ]);

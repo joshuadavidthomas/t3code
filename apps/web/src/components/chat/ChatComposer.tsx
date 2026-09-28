@@ -1408,7 +1408,10 @@ export interface ChatComposerProps {
   sandboxCatalog?: ReadonlyArray<DeclaredProviderInstanceEntry>;
   /** True only while the sandbox catalog is still loading; any other gap shows the setup control. */
   sandboxCatalogPending?: boolean;
-  onOpenSandboxSettings?: () => void;
+  /** Why the sandbox catalog is empty; replaces the host wording in the placeholder and control. */
+  sandboxUnavailableReason?: string | null;
+  /** Where to fix that reason, when the fix is a setting. */
+  sandboxSetupAction?: { readonly label: string; readonly open: () => void } | null;
   sandboxFavoriteModels?: ReadonlyMap<ProviderInstanceId, readonly string[]>;
   onSandboxFavoriteModelsChange?: (
     instanceId: ProviderInstanceId,
@@ -1546,7 +1549,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerStatuses,
     sandboxCatalog,
     sandboxCatalogPending = false,
-    onOpenSandboxSettings,
+    sandboxUnavailableReason = null,
+    sandboxSetupAction = null,
     sandboxFavoriteModels,
     onSandboxFavoriteModelsChange,
     providerCatalogKnown,
@@ -5078,14 +5082,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
     .map((def) => def.id);
   const canOpenProviderSetup =
-    sandboxCatalog === undefined ? providerSetupInstanceId !== undefined : !!onOpenSandboxSettings;
+    sandboxCatalog === undefined ? providerSetupInstanceId !== undefined : !!sandboxSetupAction;
   const composerControls = showProviderUnavailable ? (
     <ComposerControl
       type="button"
       disabled={!canOpenProviderSetup}
       onClick={() => {
         if (sandboxCatalog !== undefined) {
-          onOpenSandboxSettings?.();
+          sandboxSetupAction?.open();
         } else if (providerSetupInstanceId) {
           onOpenProviderSetup(providerSetupInstanceId);
         }
@@ -5094,7 +5098,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       className="shrink-0"
     >
       <CircleAlertIcon className="size-4" />
-      {canOpenProviderSetup ? "Open provider settings" : "No provider available"}
+      {sandboxCatalog !== undefined
+        ? (sandboxSetupAction?.label ?? sandboxUnavailableReason ?? "No provider available")
+        : canOpenProviderSetup
+          ? "Open provider settings"
+          : "No provider available"}
     </ComposerControl>
   ) : (
     <>
@@ -6492,7 +6500,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         "Type your own answer, or leave this blank to use the selected option"
                     : prompt.trim() ||
                       (showProviderUnavailable
-                        ? "Enable a provider in Settings"
+                        ? (sandboxUnavailableReason ?? "Enable a provider in Settings")
                         : "Ask anything...")}
                 </button>
                 {collapsedComposerImagePreviews}
@@ -6986,7 +6994,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             : projectSelectionRequired
                               ? "Choose a project above to start a thread"
                               : showProviderUnavailable
-                                ? "Enable a provider in Settings to send a message"
+                                ? (sandboxUnavailableReason ??
+                                  "Enable a provider in Settings to send a message")
                                 : phase === "disconnected"
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                   : "Ask anything, @tag files/folders, $use skills, or / for commands"

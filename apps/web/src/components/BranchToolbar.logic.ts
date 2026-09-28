@@ -185,7 +185,7 @@ export function resolveEffectiveEnvMode(input: {
 
 /**
  * Picking a branch for a new worktree or a sandbox only chooses its base; the
- * sandbox clones that published branch. Neither checks out the local repo.
+ * sandbox starts from that branch. Neither checks out the local repo.
  */
 export function isSelectingBranchBase(input: {
   effectiveEnvMode: EnvMode;
@@ -217,8 +217,11 @@ export function resolveBranchToolbarValue(input: {
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
+  /** A sandbox draft clones its chosen branch; the local checkout is irrelevant. */
+  sandboxDraft?: boolean;
 }): string | null {
   const { envMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
+  if (input.sandboxDraft) return activeThreadBranch;
   if (envMode === "worktree" && !activeWorktreePath) {
     return activeThreadBranch ?? currentGitBranch;
   }
@@ -231,7 +234,7 @@ export function resolveBranchTriggerLabel(input: {
   resolvedActiveBranch: string | null;
   resolvedActiveBranchIsRemote: boolean | null;
   startFromOrigin: boolean;
-  /** A sandbox draft clones the published branch, so it names its base like a new worktree. */
+  /** A sandbox draft starts from a chosen branch, so it names its base like a new worktree. */
   sandboxDraft?: boolean;
 }): string {
   const {

@@ -130,7 +130,7 @@ export function worktreeSetupStageLabel(id: WorktreeSetupStageId): string {
     case "server":
       return "Start T3 server";
     case "clone":
-      return "Clone repository";
+      return "Copy repository";
     case "credentials":
       return "Create connection credentials";
     case "connect":

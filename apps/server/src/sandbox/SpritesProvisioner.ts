@@ -12,7 +12,8 @@ import * as Schema from "effect/Schema";
 import type { loadSandboxArtifact } from "./SandboxArtifact.ts";
 import { SandboxIntakeRequest } from "./SandboxIntakeRoutes.ts";
 import { SandboxResources } from "./SandboxResources.ts";
-import type { SandboxProvisioner } from "./SandboxSubmissions.ts";
+import { makeSandboxRuntimeCatalog } from "./SandboxRuntime.ts";
+import type { SandboxProvisioner, SandboxSourcePacker } from "./SandboxSubmissions.ts";
 import type { SpritesClient } from "./SpritesClient.ts";
 
 const ROOT = "/home/sprite/t3";
@@ -53,6 +54,7 @@ process.stdin.pipe(req);`)}
 export const makeSpritesProvisioner = Effect.fnUntraced(function* (
   artifact: Effect.Success<ReturnType<typeof loadSandboxArtifact>> | null,
   resolveSource: SandboxProvisioner["resolveSource"],
+  packSource: SandboxSourcePacker,
   client: (credential: string) => Effect.Effect<SpritesClient>,
   resolveArtifact: (
     runtime: typeof SandboxRuntimeManifest.Type,
@@ -150,22 +152,26 @@ fi
         return;
       }
       if (stage === "clone") {
+        const { source } = submission;
+        const upload = `source-${NodeCrypto.randomUUID()}.pack`;
+        yield* sprites.upload(resource.name, `${ROOT}/${upload}`, yield* packSource(submission));
         yield* exec(`set -eu
-export GIT_TERMINAL_PROMPT=0
+cd ${ROOT}
+trap 'rm -f ${upload}' EXIT
 if [ ! -d ${WORKSPACE}/.git ]; then
   mkdir -p ${WORKSPACE}
-  git -C ${WORKSPACE} init >/dev/null
+  git -C ${WORKSPACE} init -q
 fi
-if git -C ${WORKSPACE} remote get-url origin >/dev/null 2>&1; then
-  git -C ${WORKSPACE} remote set-url origin ${quote(submission.source.repositoryUrl)}
-else
-  git -C ${WORKSPACE} remote add origin ${quote(submission.source.repositoryUrl)}
-fi
-git -C ${WORKSPACE} fetch --depth=1 origin ${quote(submission.source.commit)} >/dev/null 2>&1
-git -C ${WORKSPACE} update-ref ${quote(`refs/remotes/origin/${submission.source.branch}`)} ${quote(submission.source.commit)}
-git -C ${WORKSPACE} checkout -B ${quote(submission.source.branch)} ${quote(submission.source.commit)} >/dev/null 2>&1
-git -C ${WORKSPACE} branch --set-upstream-to ${quote(`origin/${submission.source.branch}`)} ${quote(submission.source.branch)} >/dev/null
-test "$(git -C ${WORKSPACE} rev-parse HEAD)" = ${quote(submission.source.commit)}
+git -C ${WORKSPACE} index-pack --stdin < ${upload} >/dev/null
+grep -qx ${quote(source.commit)} ${WORKSPACE}/.git/shallow 2>/dev/null || echo ${quote(source.commit)} >> ${WORKSPACE}/.git/shallow
+git -C ${WORKSPACE} checkout -q -B ${quote(source.branch)} ${quote(source.commit)}
+${
+  source.repositoryUrl
+    ? `git -C ${WORKSPACE} remote set-url origin ${quote(source.repositoryUrl)} 2>/dev/null ||
+  git -C ${WORKSPACE} remote add origin ${quote(source.repositoryUrl)}`
+    : ""
+}
+test "$(git -C ${WORKSPACE} rev-parse HEAD)" = ${quote(source.commit)}
 `);
         return;
       }
@@ -260,6 +266,7 @@ ${request("/api/sandbox/intake", "POST")}`,
     },
   );
   return {
+    catalog: makeSandboxRuntimeCatalog(),
     runtime: artifact?.runtime ?? null,
     resolveSource,
     stage,

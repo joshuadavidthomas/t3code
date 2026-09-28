@@ -9,13 +9,17 @@ On web and desktop, open **Settings → Connections → Add environment → Sand
 choose **Sprites**, and give the account a name and API token. You can add separate
 personal and work accounts. If the token only allows Sprite names with a prefix,
 enter that prefix too. In **Settings → Providers**, select that account in
-the environment menu and configure Claude.
+the environment menu, enable Claude, and under **Variables** choose **Connect
+subscription** to link your Claude Pro or Max subscription with `claude setup-token`.
+To use an API key instead, add `ANTHROPIC_API_KEY` there.
 
 Start a new thread, choose the account from **Run on**, then choose your project,
-published branch, and model before sending.
+branch, and model before sending. The sandbox starts from the branch's latest
+commit on this machine, so unpushed commits come along and uncommitted changes do
+not. The repository can be private or hosted anywhere. The sandbox has no Git
+credentials of its own, so it cannot push until you give it access.
 
-This first version supports Claude and public GitHub repositories. The initial
-message must be text only, and the selected branch must be pushed to GitHub.
+This first version supports Claude, and the initial message must be text only.
 Mobile can continue a paired sandbox thread; creation is on web and desktop.
 
 Manage running sandboxes under **Settings → Connections**. **Connect** opens an

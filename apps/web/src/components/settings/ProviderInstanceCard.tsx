@@ -189,6 +189,7 @@ function ProviderAuthEmail(props: { readonly email: string | undefined }) {
 
 function ProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
+  readonly action?: ReactNode;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
 }) {
   const [rows, setRows] = useState<ReadonlyArray<EnvironmentDraftRow>>(() =>
@@ -273,10 +274,13 @@ function ProviderEnvironmentSection(props: {
       title="Variables"
       description="API keys, base URLs, and other per-instance CLI settings."
       control={
-        <Button type="button" size="sm" variant="outline" onClick={addVariable}>
-          <PlusIcon className="size-3" />
-          Add variable
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {props.action}
+          <Button type="button" size="sm" variant="outline" onClick={addVariable}>
+            <PlusIcon className="size-3" />
+            Add variable
+          </Button>
+        </div>
       }
     >
       {rows.length > 0 ? (
@@ -387,6 +391,8 @@ interface ProviderInstanceCardProps {
    */
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
+  /** Shown beside Add variable, e.g. a guided way to add a credential variable. */
+  readonly variablesAction?: ReactNode;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
@@ -396,8 +402,10 @@ interface ProviderInstanceCardProps {
   readonly onRunUpdate?: (() => void) | undefined;
   readonly onInstallRecommended?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
-  /** Headline for an enabled instance with no live server status, e.g. a sandbox runtime. */
-  readonly statusLabel?: string | undefined;
+  /** Status for an enabled instance with no live server status, e.g. on a sandbox account. */
+  readonly status?:
+    | { readonly key: ProviderStatusKey; readonly headline: string; readonly detail: string | null }
+    | undefined;
 }
 
 /**
@@ -432,6 +440,7 @@ export function ProviderInstanceCard({
   onDelete,
   headerAction,
   setup,
+  variablesAction,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -441,23 +450,20 @@ export function ProviderInstanceCard({
   onRunUpdate,
   onInstallRecommended,
   isUpdating = false,
-  statusLabel,
+  status,
 }: ProviderInstanceCardProps) {
   const enabled = resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   // A locally disabled provider reads "Disabled" with a muted dot even if its
-  // last server status is stale. Enabled providers use the server status, and
-  // a caller-supplied status has no live status to color the dot with.
-  const statusKey: ProviderStatusKey =
-    enabled && !statusLabel
-      ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
-      : "disabled";
+  // last server status is stale. Enabled providers use the caller's status
+  // when given, otherwise the server status.
+  const statusKey: ProviderStatusKey = !enabled
+    ? "disabled"
+    : (status?.key ?? (liveProvider?.status as ProviderStatusKey | undefined) ?? "warning");
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const summary = !enabled
     ? { headline: "Disabled", detail: null }
-    : statusLabel
-      ? { headline: statusLabel, detail: null }
-      : getProviderSummary(liveProvider);
+    : (status ?? getProviderSummary(liveProvider));
   const authEmail = liveProvider?.auth.email?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
   const authLabel =
@@ -950,6 +956,7 @@ export function ProviderInstanceCard({
       >
         <ProviderEnvironmentSection
           environment={instance.environment ?? []}
+          action={variablesAction}
           onChange={updateEnvironment}
         />
       </SettingsSection>

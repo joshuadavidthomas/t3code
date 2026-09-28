@@ -30,7 +30,7 @@ const MAX_MANIFEST_BYTES = 1024 * 1024;
  */
 const SANDBOX_RELEASE_DEFAULT_BASE_URL =
   "https://github.com/joshuadavidthomas/t3code/releases/download";
-const SANDBOX_RELEASE_VERSION = packageJson.version;
+export const SANDBOX_RELEASE_VERSION = packageJson.version;
 /** Development and offline installs can point at a local archive with its sidecar beside it. */
 const SandboxRuntimeArchiveOverride = Config.String("T3CODE_SANDBOX_RUNTIME_ARCHIVE").pipe(
   Config.option,

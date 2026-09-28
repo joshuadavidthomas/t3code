@@ -24,6 +24,18 @@ prove that a route works. In particular, a host's loopback address refers to a
 different machine when another device opens it. Endpoint selection must not
 silently fall back to loopback when a shareable endpoint is unavailable.
 
+## Sandboxes are seeded once
+
+A sandbox is its own environment, created by the host that holds its provider
+account. The host seeds it with one pinned commit of a host project, packed
+from the local repository and uploaded through the provider, so a sandbox needs
+no access to the project's remote and can start from unpushed or private work.
+This is the only time code moves between environments. Afterward the sandbox
+is independent: nothing syncs it back to the host, and work leaves it the way it
+leaves any remote environment, through its own Git credentials.
+[SandboxSource](../../apps/server/src/sandbox/SandboxSource.ts) pins and packs
+the commit.
+
 ## Hosted web is a client
 
 The hosted web app stores its connection catalog in the browser and connects

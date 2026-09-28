@@ -6,7 +6,8 @@ import {
   type ProviderDriverKind,
   SANDBOX_PROVIDER_LABELS,
   type SandboxConfiguration,
-  type SandboxRuntimeManifest,
+  type SandboxRuntimeCatalog,
+  sandboxInstanceHasCredential,
 } from "@t3tools/contracts";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { useCallback, useEffect, useMemo } from "react";
@@ -34,7 +35,7 @@ export const SANDBOX_MODELS_LOADING = "Sandbox models loading";
 
 /** Drivers the sandbox runtime can run; Settings and the composer offer only these. */
 export function sandboxRuntimeSupportsDriver(
-  runtime: SandboxRuntimeManifest,
+  runtime: SandboxRuntimeCatalog,
   driver: ProviderDriverKind,
 ): boolean {
   return runtime.providers.some((entry) => entry.driver === driver);
@@ -42,7 +43,7 @@ export function sandboxRuntimeSupportsDriver(
 
 export function sandboxComposerCatalog(
   configuration: SandboxConfiguration,
-  runtime: SandboxRuntimeManifest,
+  runtime: SandboxRuntimeCatalog,
 ): ReadonlyArray<DeclaredProviderInstanceEntry> {
   return Object.entries(configuration.providerInstances).flatMap(([id, instance]) => {
     if (!resolveProviderInstanceEnabled(instance)) return [];
@@ -186,12 +187,18 @@ export function useSandboxComposer(target: SandboxTarget | null, enabled: boolea
           : (query.error ??
             (!current
               ? SANDBOX_MODELS_LOADING
-              : (current.reason ??
-                (!current.runtime
-                  ? "Sandbox runtime unavailable"
-                  : !catalog.some((entry) => entry.models.length > 0)
-                    ? "No provider configured"
-                    : null))));
+              : !current.runtime
+                ? "Sandboxes unavailable"
+                : !catalog.some((entry) => entry.models.length > 0)
+                  ? "No provider configured"
+                  : null));
+  // Where the user can fix the reason; the others need a reconnect or a server change.
+  const reasonFix: "account" | "providers" | null =
+    reason === "Sandbox token required"
+      ? "account"
+      : reason === "No provider configured"
+        ? "providers"
+        : null;
   const favoriteModels = useMemo(
     () =>
       new Map(
@@ -261,10 +268,19 @@ export function useSandboxComposer(target: SandboxTarget | null, enabled: boolea
     },
     [owner, primarySession, query, registration, remoteSession, saveProviderInstance, target],
   );
+  const credentialMissing = useCallback(
+    (instanceId: ProviderInstanceId) => {
+      const instance = registration?.configuration.providerInstances[instanceId];
+      return instance !== undefined && !sandboxInstanceHasCredential(instance);
+    },
+    [registration],
+  );
   return {
     registrations,
     catalog,
     reason,
+    reasonFix,
+    credentialMissing,
     loading: reason === SANDBOX_MODELS_LOADING,
     runtimeId: current?.runtime?.id ?? null,
     configurationRevision: current?.configurationRevision ?? null,

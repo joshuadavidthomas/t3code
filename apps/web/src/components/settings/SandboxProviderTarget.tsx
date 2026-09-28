@@ -2,6 +2,7 @@ import {
   defaultInstanceIdForDriver,
   type EnvironmentId,
   SANDBOX_PROVIDER_LABELS,
+  sandboxInstanceHasCredential,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   type SandboxConfiguration,
@@ -22,6 +23,7 @@ import { serverEnvironment } from "../../state/server";
 import { MenuRadioItem, MenuRadioItemIndicator } from "../ui/menu";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { SandboxCredentialAction } from "./SandboxCredentialAction";
 import { ProviderSettingsEditorLayout, ProviderSettingsPlaceholder } from "./ProviderSettingsPanel";
 import { DRIVER_OPTIONS } from "./providerDriverMeta";
 import { sandboxRuntimeSupportsDriver } from "../chat/useSandboxComposer";
@@ -428,7 +430,24 @@ export function SandboxProviders({
         selected={selectedInstanceId === instanceId}
         onSelect={() => setSelected(instanceId)}
         readOnly={readOnly}
-        statusLabel="Enabled"
+        status={
+          sandboxInstanceHasCredential(instance)
+            ? { key: "ready", headline: "Enabled", detail: null }
+            : {
+                key: "warning",
+                headline: "Not authenticated",
+                detail: "Add a credential under Variables",
+              }
+        }
+        variablesAction={
+          // Once any credential variable is set, its row is where to replace or remove it.
+          readOnly || sandboxInstanceHasCredential(instance) ? null : (
+            <SandboxCredentialAction
+              instance={instance}
+              onUpdate={(next) => updateInstance(instanceId, instance, next)}
+            />
+          )
+        }
         onUpdate={(next) => updateInstance(instanceId, instance, next)}
         hiddenModels={preferences.hiddenModels}
         favoriteModels={preferences.favoriteModels}

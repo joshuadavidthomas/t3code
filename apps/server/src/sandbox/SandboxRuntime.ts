@@ -7,6 +7,7 @@ import {
   type ModelSelection,
   type ProviderInteractionMode,
   type ProviderInstanceConfigMap,
+  type SandboxRuntimeCatalog,
   type SandboxRuntimeManifest,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
@@ -18,10 +19,13 @@ import {
 
 export const SANDBOX_CLAUDE_VERSION = "2.1.280";
 
-/** Called by the built artifact and destination, never from the host's live provider inventory. */
-export function makeSandboxRuntimeManifest(artifactIntegrity: string): SandboxRuntimeManifest {
-  const manifest = {
-    artifactIntegrity,
+/**
+ * What a sandbox built from this code offers. The host uses it for launch
+ * options; the artifact's sidecar embeds the same catalog, so ids match
+ * whenever the archive was built from the same code.
+ */
+export function makeSandboxRuntimeCatalog(): SandboxRuntimeCatalog {
+  const catalog = {
     orchestrationProtocol: ORCHESTRATION_PROTOCOL_VERSION,
     intakeVersion: SANDBOX_INTAKE_VERSION,
     providers: [
@@ -34,14 +38,19 @@ export function makeSandboxRuntimeManifest(artifactIntegrity: string): SandboxRu
     ],
   };
   return {
-    id: NodeCrypto.createHash("sha256").update(JSON.stringify(manifest)).digest("hex"),
-    ...manifest,
+    id: NodeCrypto.createHash("sha256").update(JSON.stringify(catalog)).digest("hex"),
+    ...catalog,
   };
+}
+
+/** Called by the artifact build and the destination, never from the host's live providers. */
+export function makeSandboxRuntimeManifest(artifactIntegrity: string): SandboxRuntimeManifest {
+  return { ...makeSandboxRuntimeCatalog(), artifactIntegrity };
 }
 
 /** Validate the exact selection against the destination artifact, not the host's providers. */
 export const validateSandboxSelection = Effect.fnUntraced(function* (
-  runtime: SandboxRuntimeManifest,
+  runtime: SandboxRuntimeCatalog,
   instances: ProviderInstanceConfigMap,
   selection: ModelSelection,
   interactionMode: ProviderInteractionMode,

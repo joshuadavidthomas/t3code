@@ -180,6 +180,18 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
 });
 
 describe("resolveBranchToolbarValue", () => {
+  it("shows a sandbox draft's chosen branch, not the local checkout", () => {
+    expect(
+      resolveBranchToolbarValue({
+        envMode: "local",
+        activeWorktreePath: null,
+        activeThreadBranch: "main",
+        currentGitBranch: "feature/local-only",
+        sandboxDraft: true,
+      }),
+    ).toBe("main");
+  });
+
   it("defaults new-worktree mode to current git ref when no explicit base ref is set", () => {
     expect(
       resolveBranchToolbarValue({

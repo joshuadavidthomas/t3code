@@ -424,6 +424,15 @@ it("hands a refused launch back with the server's reason and keeps an unconfirme
       await mounted.actions().submit(EnvironmentId.make("owner"), input);
     });
     expect(sandboxSubmitRejection(refused)).toBe("Account changed.");
+    expect(
+      sandboxSubmitRejection(
+        AsyncResult.failure(
+          Cause.fail(
+            new SandboxSubmissionError({ code: "unavailable", message: "Server build missing." }),
+          ),
+        ),
+      ),
+    ).toBe("Server build missing.");
     expect(useComposerDraftStore.getState().getDraftSession(draftId)?.sandboxSetup).toBeNull();
     expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
       "Original prompt",
