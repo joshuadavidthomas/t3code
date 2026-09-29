@@ -722,9 +722,15 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   const setupFailed = useComposerDraftStore(
     (store) => store.getDraftSession(draftId)?.sandboxSetup?.snapshot.phase === "failed",
   );
+  // A thread row's Working and Failed colors.
+  const setupStatus = setupPending
+    ? { className: "text-sky-600 dark:text-sky-400" }
+    : setupFailed
+      ? { className: "text-red-700 dark:text-red-300" }
+      : null;
   const promptPreview =
     replaceComposerContextReferences(
-      composer.prompt || session.sandboxSetup?.prompt || "",
+      session.sandboxSetup?.prompt || composer.prompt,
       (occurrence) => occurrence.label,
     )
       .trim()
@@ -743,7 +749,8 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
       : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
   const accessibility = resolveSidebarRowAccessibility({
     title: preview,
-    statusLabel: "Unsent draft",
+    // A sandbox launch was sent: it announces its status as a thread row does.
+    statusLabel: setupPending ? "Working" : setupFailed ? "Failed" : "Unsent draft",
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -798,12 +805,22 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               {/* A sandbox setup reads like a thread's status: Working while it
                   runs, Failed until retried or discarded (the hover action). */}
               {setupPending ? (
-                <span className="inline-flex items-center gap-1 font-medium text-sky-600 dark:text-sky-400">
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 font-medium",
+                    setupStatus?.className,
+                  )}
+                >
                   <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
                   <span role="status">Working</span>
                 </span>
               ) : setupFailed ? (
-                <span className="pointer-events-none inline-flex items-center gap-1 font-medium text-red-700 transition-opacity group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0 group-has-[:focus-visible]/sidebar-row:absolute group-has-[:focus-visible]/sidebar-row:right-0 group-has-[:focus-visible]/sidebar-row:opacity-0 dark:text-red-300">
+                <span
+                  className={cn(
+                    "pointer-events-none inline-flex items-center gap-1 font-medium transition-opacity group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0 group-has-[:focus-visible]/sidebar-row:absolute group-has-[:focus-visible]/sidebar-row:right-0 group-has-[:focus-visible]/sidebar-row:opacity-0",
+                    setupStatus?.className,
+                  )}
+                >
                   <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
                   <span role="status">Failed</span>
                 </span>
@@ -901,10 +918,11 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       ) {
         continue;
       }
-      if (draftKey === props.routeDraftId) {
+      if (draftKey === props.routeDraftId && !session.sandboxSetup) {
         // Open draft: render the frozen entry snapshot, or nothing for a
         // draft that has never been left. Gated on the LIVE session above so
-        // send/discard still removes the row immediately.
+        // send/discard still removes the row immediately. A sandbox launch
+        // has been sent, so like a worktree thread it keeps a live row.
         if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
           rows.push(frozenActive.row);
         }

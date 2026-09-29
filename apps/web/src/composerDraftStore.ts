@@ -333,6 +333,8 @@ const SandboxDraftSetup = Schema.Struct({
       ownerEnvironmentId: Schema.optionalKey(EnvironmentId),
       input: Schema.optionalKey(SandboxSubmitInput),
       intakeStarted: Schema.optionalKey(Schema.Boolean),
+      /** Another client sent it; this one only shows it. */
+      sentElsewhere: Schema.optionalKey(Schema.Boolean),
     }),
   ),
 });
@@ -613,6 +615,18 @@ interface ComposerDraftStoreState {
   /** Removes draft-session metadata after promotion is complete. */
   finalizePromotedDraftThread: (threadRef: ComposerThreadTarget) => void;
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
+  /** Shows a sandbox launch sent from another client, unless one already shows it here. */
+  addSandboxLaunchDraft: (
+    draftId: DraftId,
+    projectRef: ScopedProjectRef,
+    options: {
+      threadId: ThreadId;
+      createdAt: string;
+      branch: string | null;
+      sandboxTarget: SandboxTarget;
+      sandboxSetup: SandboxDraftSetup;
+    },
+  ) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
@@ -3014,6 +3028,34 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               return state;
             }
             return removeDraftThreadReferences(state, threadKey);
+          });
+        },
+        addSandboxLaunchDraft: (draftId, projectRef, options) => {
+          set((state) => {
+            const commandId = options.sandboxSetup.submission?.commandId;
+            if (
+              Object.values(state.draftThreadsByThreadKey).some(
+                (draft) => draft.sandboxSetup?.submission?.commandId === commandId,
+              )
+            ) {
+              return state;
+            }
+            return {
+              draftThreadsByThreadKey: {
+                ...state.draftThreadsByThreadKey,
+                [draftId]: {
+                  ...createDraftThreadState(
+                    projectRef,
+                    options.threadId,
+                    projectDraftKey(projectRef),
+                    undefined,
+                    { createdAt: options.createdAt, branch: options.branch },
+                  ),
+                  sandboxTarget: options.sandboxTarget,
+                  sandboxSetup: options.sandboxSetup,
+                },
+              },
+            };
           });
         },
         setStickyModelSelection: (modelSelection) => {

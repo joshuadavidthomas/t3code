@@ -125,6 +125,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import { SandboxConfigurations } from "./sandbox/SandboxConfiguration.ts";
 import {
   SandboxSubmissions,
+  toSandboxLaunch,
   toSandboxSubmission,
   withSavedSandboxes,
 } from "./sandbox/SandboxSubmissions.ts";
@@ -2634,7 +2635,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.sandboxGetSubmission]: ({ commandId }) =>
           observeRpcEffect(
             WS_METHODS.sandboxGetSubmission,
-            sandboxSubmissions.get(commandId).pipe(Effect.map(toSandboxSubmission)),
+            sandboxSubmissions.get(commandId).pipe(Effect.map(toSandboxLaunch)),
           ),
         // The sandbox issues a standard client credential, so like pairing-token
         // issuance the caller must already hold every scope it delegates.

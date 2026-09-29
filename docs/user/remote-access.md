@@ -24,6 +24,10 @@ Sandboxes sign in to GitHub with the launching machine's GitHub CLI login, so
 if `gh auth status` works there, sandboxes can push and open pull requests.
 Each sandbox keeps the login it launched with.
 
+Every web and desktop device paired with the launching machine shows a sandbox
+while it sets up and opens its thread once it's ready, whichever device
+launched it.
+
 This first version supports Claude, and the initial message must be text only.
 Mobile can continue a paired sandbox thread; creation is on web and desktop.
 
@@ -40,9 +44,10 @@ Deleting the last thread in a sandbox offers to delete the sandbox too; with
 **Delete worktrees with deleted threads** on, it's deleted without asking once
 all its work is pushed. Discarding a failed launch deletes its sandbox.
 
-Manage sandboxes under **Settings → Connections**. **Connect** opens an
-existing sandbox; **Delete sandbox** removes it along with its threads. Removing
-an account or disconnecting an environment does not delete its sandboxes.
+Manage sandboxes under **Settings → Connections**. **Connect** opens a sandbox
+a device couldn't connect to on its own; **Delete sandbox** removes it along
+with its threads, from every device. Removing an account or disconnecting an
+environment does not delete its sandboxes.
 
 ## T3 Connect
 

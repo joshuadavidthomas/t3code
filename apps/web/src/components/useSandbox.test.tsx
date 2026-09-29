@@ -6,6 +6,7 @@ import {
   ProjectId,
   SandboxSubmissionError,
   ThreadId,
+  type SandboxSubmission,
   type SandboxSubmissionUpdate,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -78,6 +79,7 @@ import {
   type SandboxDraftSetup,
 } from "../composerDraftStore";
 import {
+  addSandboxLaunchDraft,
   SandboxSubmissionCoordinator,
   sandboxSubmitRejection,
   useDiscardDraftThread,
@@ -564,4 +566,73 @@ it("tells the user when a discarded launch's sandbox couldn't be deleted", async
   });
   await discard(setup("failed"));
   expect(state.toast).toHaveBeenCalledOnce();
+});
+
+function launchFromElsewhere(phase: "running" | "failed" = "running"): SandboxSubmission {
+  return {
+    input: {
+      commandId: CommandId.make("sandbox:elsewhere"),
+      title: "Elsewhere",
+      configurationId: "7b0f8a52-7f6c-4c3e-9d0e-3c1f4a5b6c7d",
+      projectId: ProjectId.make("source-project"),
+      messageId,
+      prompt: "Sent from the phone",
+    },
+    progress: setup(phase).snapshot,
+    destination: null,
+    intakeStarted: false,
+    cancelRequested: false,
+    deletedAt: null,
+    deletionError: null,
+  };
+}
+
+function launchDrafts(commandId: string) {
+  return Object.entries(useComposerDraftStore.getState().draftThreadsByThreadKey).filter(
+    ([, draft]) => draft.sandboxSetup?.submission?.commandId === commandId,
+  );
+}
+
+it("shows a launch sent from another client once, and drops it when cancelled there", async () => {
+  const launch = launchFromElsewhere();
+  const owner = EnvironmentId.make("owner");
+  addSandboxLaunchDraft(owner, launch);
+  addSandboxLaunchDraft(owner, launch);
+  const shown = launchDrafts(launch.input.commandId);
+  expect(shown).toHaveLength(1);
+  const [shownId, draft] = shown[0]!;
+  expect(draft).toMatchObject({ environmentId: owner, projectId: "source-project" });
+  expect(draft.sandboxSetup).toMatchObject({ prompt: "Sent from the phone", messageId });
+
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(<SandboxSubmissionCoordinator />);
+  });
+  state.update = {
+    commandId: launch.input.commandId,
+    progress: { ...launch.progress, phase: "cancelled", sequence: 9 },
+    destination: null,
+    intakeStarted: false,
+    cancelRequested: true,
+    deletedAt: null,
+    deletionError: null,
+  };
+  await act(async () => renderer.update(<SandboxSubmissionCoordinator />));
+  await act(async () => renderer.unmount());
+  // Only the client that sent it gets the prompt back to edit.
+  expect(useComposerDraftStore.getState().getDraftSession(DraftId.make(shownId))).toBeNull();
+  expect(useComposerDraftStore.getState().getComposerDraft(DraftId.make(shownId))).toBeNull();
+});
+
+it("doesn't bring back a launch this client discarded while the host still lists it", async () => {
+  state.commands.get("delete")!.mockResolvedValue({
+    _tag: "Success",
+    value: { destination: null, deletionError: null, deletedAt: null },
+  });
+  await discard(setup("failed"));
+  addSandboxLaunchDraft(EnvironmentId.make("owner"), {
+    ...launchFromElsewhere("failed"),
+    input: { ...launchFromElsewhere().input, commandId: setup().submission!.commandId },
+  });
+  expect(launchDrafts(setup().submission!.commandId)).toHaveLength(0);
 });

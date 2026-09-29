@@ -138,6 +138,10 @@ export const SandboxSubmission = Schema.Struct({
     configurationId: Schema.String.check(Schema.isUUID(4)),
     /** The host project it launched from, whose worktree cleanup rules it follows. */
     projectId: ProjectId,
+    /** The first message, which only fetching one launch carries, so any client can
+     * show a launch in progress. Lists and updates leave it out. */
+    messageId: Schema.optionalKey(MessageId),
+    prompt: Schema.optionalKey(Schema.String),
   }),
   progress: WorktreeSetupSnapshot,
   destination: Schema.NullOr(SandboxDestination),

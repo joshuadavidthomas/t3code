@@ -34,6 +34,7 @@ import {
   makeSandboxSubmissions,
   SANDBOX_PROVISION_STAGES,
   type SandboxCapturedSecrets,
+  toSandboxLaunch,
   toSandboxSubmission,
   type SandboxProvisioner,
   withSavedSandboxes,
@@ -198,6 +199,12 @@ it.effect(
       ).toEqual(done.destination);
       // Clients name the sandbox after the provider's own name for it.
       expect(toSandboxSubmission(done).resourceName).toBe("t3-sandbox");
+      // Opening one launch shows its message; lists never carry prompts.
+      expect(toSandboxSubmission(done).input.prompt).toBeUndefined();
+      expect(toSandboxLaunch(done).input).toMatchObject({
+        messageId: input.messageId,
+        prompt: input.prompt,
+      });
       expect(done.progress.stages.map((stage) => [stage.id, stage.status])).toEqual([
         ["source", "done"],
         ["create", "done"],

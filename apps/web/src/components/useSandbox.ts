@@ -33,7 +33,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { newThreadId } from "../lib/utils";
+import { newDraftId, newThreadId } from "../lib/utils";
 import { useThreadDetail, useThreadShell } from "../state/entities";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { threadHasStarted } from "./ChatView.logic";
@@ -67,6 +67,11 @@ function applySubmission(
     },
   });
   if (submission.progress.phase === "cancelled" || submission.deletedAt) {
+    // Only the client that sent it gets the prompt back to edit.
+    if (setup.submission.sentElsewhere) {
+      store.clearDraftThread(draftId);
+      return;
+    }
     store.setPrompt(draftId, setup.prompt);
     store.setDraftThreadContext(draftId, { sandboxSetup: null });
     recoverCancelledSandboxDraft(draftId, newThreadId());
@@ -95,6 +100,52 @@ export function sandboxSubmitRejection(result: AtomCommandResult<unknown, unknow
 // Launches this client is still submitting. Until submit returns, the host may
 // not have stored the command, so its absence is not yet a lost launch.
 const submitting = new Set<CommandId>();
+// Launches discarded here, which the host still lists until it deletes them.
+const discarded = new Set<CommandId>();
+
+/** Shows a launch in progress that another client sent, the way a worktree thread
+ * being set up shows on every client. */
+export function addSandboxLaunchDraft(
+  ownerEnvironmentId: EnvironmentId,
+  launch: SandboxSubmission,
+) {
+  const { commandId, configurationId, projectId, messageId, prompt } = launch.input;
+  const phase = launch.progress.phase;
+  if (
+    (phase !== "running" && phase !== "failed") ||
+    launch.deletedAt ||
+    launch.savedAt ||
+    discarded.has(commandId) ||
+    messageId === undefined ||
+    prompt === undefined
+  )
+    return;
+  useComposerDraftStore
+    .getState()
+    .addSandboxLaunchDraft(newDraftId(), scopeProjectRef(ownerEnvironmentId, projectId), {
+      threadId: launch.progress.threadId,
+      createdAt: launch.progress.startedAt,
+      branch: launch.progress.branch,
+      sandboxTarget: { ownerEnvironmentId, configurationId },
+      sandboxSetup: {
+        prompt,
+        messageId,
+        snapshot: launch.progress,
+        submission: {
+          key: commandId,
+          sourceProjectId: projectId,
+          sourceBranch: launch.progress.branch,
+          commandId,
+          intent: "foreground",
+          handoff: "provisioning",
+          ownerEnvironmentId,
+          intakeStarted: launch.intakeStarted,
+          sentElsewhere: true,
+        },
+      },
+    });
+  flushComposerDraftStorage();
+}
 
 export function useSandboxSubmission(draftId: DraftId | null, setup: SandboxDraftSetup | null) {
   const ownerEnvironmentId = setup?.submission?.ownerEnvironmentId ?? null;
@@ -307,6 +358,7 @@ export function useDiscardDraftThread() {
     (draftId: DraftId) => {
       const setup = useComposerDraftStore.getState().getDraftSession(draftId)?.sandboxSetup;
       if (isDraftDiscardLocked(setup)) return;
+      if (setup?.submission) discarded.add(setup.submission.commandId);
       releaseComposerDraftUploads(draftId);
       clearDraftThread(draftId);
       const owner = setup?.submission?.ownerEnvironmentId;

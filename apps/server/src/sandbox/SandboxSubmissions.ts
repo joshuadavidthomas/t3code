@@ -128,6 +128,14 @@ export const toSandboxSubmission = (value: SandboxSubmissionRecord): SandboxSubm
   deletedAt: value.deletedAt,
   deletionError: value.deletionError,
 });
+/** One launch as a client opens it, with the message lists leave out. */
+export const toSandboxLaunch = (value: SandboxSubmissionRecord): SandboxSubmission => {
+  const submission = toSandboxSubmission(value);
+  return {
+    ...submission,
+    input: { ...submission.input, messageId: value.input.messageId, prompt: value.input.prompt },
+  };
+};
 const toUpdate = (value: SandboxSubmissionRecord): SandboxSubmissionUpdate => ({
   commandId: value.input.commandId,
   progress: value.progress,
