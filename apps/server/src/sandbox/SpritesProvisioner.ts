@@ -13,7 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { loadSandboxArtifact } from "./SandboxArtifact.ts";
-import { SANDBOX_WORKSPACE_ROOT } from "./SandboxDeployment.ts";
+import { SANDBOX_SETUP_MADE_FILE, SANDBOX_WORKSPACE_ROOT } from "./SandboxDeployment.ts";
 import { SandboxIntakeRequest } from "./SandboxIntakeRoutes.ts";
 import { SandboxResources } from "./SandboxResources.ts";
 import type { SandboxSaves } from "./SandboxSaves.ts";
@@ -52,12 +52,17 @@ ${ROOT}/runtime/t3 auth session issue --base-dir ${ROOT}/state --subject sandbox
 
 // A just-registered server may still be migrating its database, and a control
 // session issued meanwhile can race it, so setup waits until it answers at all.
+// A request made while it is still starting can go unanswered, so each try times out.
 const waitForServer = `node -e ${quote(`const http = require('node:http');
 const deadline = Date.now() + 120000;
-const attempt = () => http.get({host:'127.0.0.1',port:8080,path:'/api/sandbox/runtime'}, res => res.resume()).on('error', () => {
-  if (Date.now() > deadline) process.exit(1);
-  setTimeout(attempt, 500);
-});
+const attempt = () => {
+  const req = http.get({host:'127.0.0.1',port:8080,path:'/api/sandbox/runtime',agent:false}, () => process.exit(0));
+  req.setTimeout(3000, () => req.destroy());
+  req.on('error', () => {
+    if (Date.now() > deadline) process.exit(1);
+    setTimeout(attempt, 500);
+  });
+};
 attempt();`)}`;
 
 // Exec's stdin carries intake JSON; neither provider credentials nor the control token
@@ -67,7 +72,7 @@ ${issueControlSession}
 node -e ${quote(`const fs = require('node:fs');
 const http = require('node:http');
 const token = JSON.parse(fs.readFileSync('${ROOT}/control-session.json', 'utf8')).token;
-const req = http.request({host:'127.0.0.1',port:8080,path:'${path}',method:'${method}',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'}}, res => {
+const req = http.request({host:'127.0.0.1',port:8080,path:'${path}',method:'${method}',agent:false,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'}}, res => {
   if(res.statusCode < 200 || res.statusCode > 299) { res.resume(); process.exitCode=1; return; }
   res.pipe(process.stdout);
 });
@@ -98,6 +103,7 @@ const T3_SERVICE = {
 const SAVED_STATE = ["home/sprite/t3/state", "home/sprite/.claude"];
 const SAVE = `${ROOT}/save`;
 const RESTORE = `${ROOT}/restore`;
+const SETUP_MADE = `${ROOT}/state/userdata/${SANDBOX_SETUP_MADE_FILE}`;
 
 // The Sprite image ships its own older Claude on the login shell's PATH, which T3
 // puts ahead of the service PATH, so name the pinned install explicitly.
@@ -415,8 +421,9 @@ ${request("/api/sandbox/save")}`,
             workspace: WORKSPACE,
             out: SAVE,
             seed: quote(submission.source.commit),
+            setupMade: SETUP_MADE,
           })
-        : saveWholeWorkspaceScript({ workspace: WORKSPACE, out: SAVE });
+        : saveWholeWorkspaceScript({ workspace: WORKSPACE, out: SAVE, setupMade: SETUP_MADE });
       const archive = yield* sprites
         .exec(
           resource.name,
