@@ -17,6 +17,12 @@ import { SANDBOX_WORKSPACE_ROOT } from "./SandboxDeployment.ts";
 import { SandboxIntakeRequest } from "./SandboxIntakeRoutes.ts";
 import { SandboxResources } from "./SandboxResources.ts";
 import type { SandboxSaves } from "./SandboxSaves.ts";
+import {
+  restoreWholeWorkspaceScript,
+  restoreWorkspaceScript,
+  saveWholeWorkspaceScript,
+  saveWorkspaceScript,
+} from "./SandboxWorkspaceSave.ts";
 import { makeSandboxRuntimeCatalog } from "./SandboxRuntime.ts";
 import type { SandboxProvisioner, SandboxSourcePacker } from "./SandboxSubmissions.ts";
 import type { SpritesClient } from "./SpritesClient.ts";
@@ -87,10 +93,11 @@ const T3_SERVICE = {
   http_port: 8080,
 };
 
-// Everything a restore needs besides the runtime: T3's state, which keeps the environment
-// and its threads, the providers' transcripts, and the workspace. Ignored node_modules
-// folders are left out and reinstall.
-const SAVED_PATHS = ["home/sprite/t3/state", "home/sprite/.claude", WORKSPACE.slice(1)];
+// Besides the workspace, a restore needs T3's state, which keeps the environment and its
+// threads, and the providers' transcripts.
+const SAVED_STATE = ["home/sprite/t3/state", "home/sprite/.claude"];
+const SAVE = `${ROOT}/save`;
+const RESTORE = `${ROOT}/restore`;
 
 // The Sprite image ships its own older Claude on the login shell's PATH, which T3
 // puts ahead of the service PATH, so name the pinned install explicitly.
@@ -115,6 +122,7 @@ export const makeSpritesProvisioner = Effect.fnUntraced(function* (
   artifact: Effect.Success<ReturnType<typeof loadSandboxArtifact>> | null,
   resolveSource: SandboxProvisioner["resolveSource"],
   packSource: SandboxSourcePacker,
+  hasSource: (submission: Parameters<SandboxSourcePacker>[0]) => Effect.Effect<boolean>,
   saves: SandboxSaves,
   client: (credential: string) => Effect.Effect<SpritesClient>,
   resolveArtifact: (
@@ -195,16 +203,17 @@ runtime/t3 sandbox-runtime-manifest --artifact-integrity ${quote(selectedArtifac
       }
       if (stage === "server") {
         if (submission.saved) {
-          const upload = `restore-${NodeCrypto.randomUUID()}.tar.gz`;
           yield* sprites.upload(
             resource.name,
-            `${ROOT}/${upload}`,
+            `${ROOT}/restore.tar`,
             yield* saves.read(submission.input.commandId),
           );
-          yield* exec(`cd ${ROOT}
-trap 'rm -f ${upload}' EXIT
-sudo install -d -o "$(id -u)" -g "$(id -g)" ${WORKSPACE}
-tar -xzf ${upload} -C /
+          // State goes back before the server first starts; the workspace follows in clone.
+          yield* exec(`rm -rf ${RESTORE}
+mkdir -p ${RESTORE}
+tar -xf ${ROOT}/restore.tar -C ${RESTORE}
+rm ${ROOT}/restore.tar
+tar -xzf ${RESTORE}/state.tar.gz -C /
 `);
         }
         const deployment = yield* encodeJson({
@@ -260,8 +269,27 @@ git config --global --add url.https://github.com/.insteadOf ssh://git@github.com
 git config --global user.email ${quote(submission.source.author.email)}`
         : "";
       if (stage === "clone" && submission.saved) {
-        // The saved workspace is already back; only the Git identity is not.
-        yield* exec(identity);
+        // Seeded from the host like a launch, then the saved work goes on top.
+        const seed = (yield* hasSource(submission)) ? `seed-${NodeCrypto.randomUUID()}.pack` : null;
+        if (seed)
+          yield* sprites.upload(resource.name, `${ROOT}/${seed}`, yield* packSource(submission));
+        yield* exec(`sudo install -d -o "$(id -u)" -g "$(id -g)" ${WORKSPACE}
+if [ -f ${RESTORE}/workspace.tar.gz ]; then
+${restoreWholeWorkspaceScript({ workspace: WORKSPACE, from: RESTORE })}
+else
+${
+  seed
+    ? `git -C ${WORKSPACE} init -q
+git -C ${WORKSPACE} index-pack --stdin < ${ROOT}/${seed} >/dev/null
+rm -f ${ROOT}/${seed}
+${restoreWorkspaceScript({ workspace: WORKSPACE, from: RESTORE })}`
+    : `echo "The commit this sandbox started from is no longer in the project." >&2
+exit 1`
+}
+fi
+${identity}
+rm -rf ${RESTORE}
+`);
         return;
       }
       if (stage === "clone") {
@@ -381,20 +409,25 @@ ${request("/api/sandbox/save")}`,
         );
       // Stopped so its database is consistent in the archive.
       yield* sprites.stopService(resource.name, "t3");
+      // The seed commit comes back from the host's repo, unless the host no longer has it.
+      const workspace = (yield* hasSource(submission))
+        ? saveWorkspaceScript({
+            workspace: WORKSPACE,
+            out: SAVE,
+            seed: quote(submission.source.commit),
+          })
+        : saveWholeWorkspaceScript({ workspace: WORKSPACE, out: SAVE });
       const archive = yield* sprites
         .exec(
           resource.name,
-          `set -eu
-# Only ignored dependency folders are left out: a tracked one is part of the work.
-git -C ${WORKSPACE} ls-files -z --others --ignored --exclude-standard --directory |
-  tr '\\0' '\\n' | { grep -E '(^|/)node_modules/$' || true; } |
-  sed -e 's#^#${WORKSPACE.slice(1)}/#' -e 's#/$##' > ${ROOT}/save-exclude
+          `${workspace}
 cd /
-tar -czf ${ROOT}/save.tar.gz --exclude-from=${ROOT}/save-exclude --exclude=home/sprite/t3/state/userdata/logs ${SAVED_PATHS.join(" ")}
+tar -czf ${SAVE}/state.tar.gz --exclude=home/sprite/t3/state/userdata/logs ${SAVED_STATE.join(" ")}
+tar -cf ${ROOT}/save.tar -C ${SAVE} .
 `,
           "",
         )
-        .pipe(Effect.andThen(sprites.download(resource.name, `${ROOT}/save.tar.gz`)), Effect.exit);
+        .pipe(Effect.andThen(sprites.download(resource.name, `${ROOT}/save.tar`)), Effect.exit);
       if (archive._tag === "Failure") {
         // Nothing is lost: put the sandbox back as it was.
         yield* sprites.putService(resource.name, "t3", T3_SERVICE).pipe(Effect.ignore);

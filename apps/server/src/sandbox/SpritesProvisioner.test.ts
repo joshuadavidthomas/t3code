@@ -121,6 +121,7 @@ it.effect(
           { runtime, archivePath: "/unused" },
           () => Effect.succeed(submission.source),
           () => Effect.succeed(new Uint8Array()),
+          () => Effect.succeed(true),
           memorySaves(),
           () => Effect.succeed(client),
         );
@@ -165,6 +166,7 @@ it.effect(
         null,
         () => Effect.succeed(submission.source),
         () => Effect.succeed(new Uint8Array()),
+        () => Effect.succeed(true),
         memorySaves(),
         (credential) => {
           expect(credential).toBe(captured.credential);
@@ -250,6 +252,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
       { runtime: { ...runtime, id: "current-runtime" }, archivePath },
       () => Effect.succeed(submission.source),
       () => Effect.succeed(new Uint8Array([4, 5, 6])),
+      () => Effect.succeed(true),
       memorySaves(),
       (credential) => {
         expect(credential).toBe(captured.credential);
@@ -358,7 +361,7 @@ it.effect("saves a sandbox to the host and restores it under the same name", () 
       upload: (_name, path, body) =>
         Effect.sync(() => {
           operations.push(`upload ${path.split("/").pop()!.split("-")[0]}`);
-          if (path.includes("restore-")) expect(body).toEqual(saved);
+          if (path.endsWith("restore.tar")) expect(body).toEqual(saved);
         }),
       download: () =>
         Effect.sync(() => {
@@ -384,6 +387,7 @@ it.effect("saves a sandbox to the host and restores it under the same name", () 
       { runtime, archivePath },
       () => Effect.succeed(submission.source),
       () => Effect.succeed(new Uint8Array([4])),
+      () => Effect.succeed(true),
       memorySaves(store),
       () => Effect.succeed(client),
     );
@@ -397,7 +401,9 @@ it.effect("saves a sandbox to the host and restores it under the same name", () 
     expect(yield* provisioner.save(submission, captured.credential)).toEqual(archived);
     // Stopped before archiving, so the database is consistent, then deleted.
     expect(operations).toEqual(["stop", "download", "remove"]);
-    expect(scripts.some((entry) => entry.script.includes("tar -czf"))).toBe(true);
+    // Only the work on top of the seed, which the host still has.
+    expect(scripts.some((entry) => entry.script.includes("git rev-list --objects"))).toBe(true);
+    expect(scripts.some((entry) => entry.script.includes("workspace.tar.gz"))).toBe(false);
     expect([...store.values()]).toEqual([saved]);
     expect((yield* resources.get(submission.input.commandId)).sprite).toBeNull();
 
@@ -412,10 +418,9 @@ it.effect("saves a sandbox to the host and restores it under the same name", () 
       yield* provisioner.stage(stage, restoring, captured);
     // Same name, so the environment comes back at the same URL.
     expect(sprite).toEqual({ id: "sprite-2", url: `https://${name}.example` });
-    // The save replaces the seed pack; the runtime installs as usual.
-    expect(operations).toEqual(["upload runtime", "upload restore"]);
-    expect(scripts.some((entry) => entry.script.includes("tar -xzf"))).toBe(true);
-    expect(scripts.some((entry) => entry.script.includes("index-pack"))).toBe(false);
+    // Seeded from the host like a launch, then the save goes on top.
+    expect(operations).toEqual(["upload runtime", "upload restore.tar", "upload seed"]);
+    expect(scripts.some((entry) => entry.script.includes("checkout-index"))).toBe(true);
     expect(yield* provisioner.intake(restoring, captured)).toEqual(destination);
     expect(scripts.at(-1)!.script).toContain("/api/sandbox/unarchive");
     expect(scripts.at(-1)!.input).toBe(encode({ threadId: submission.input.threadId }));

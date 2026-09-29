@@ -85,12 +85,27 @@ export const makeConfiguredSandboxProvisioner = Effect.fnUntraced(function* () {
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
+  // A save leaves the seed commit out when the host's repo can still provide it.
+  const hasSource = (submission: Parameters<SandboxSourcePacker>[0]) =>
+    findProject(submission.input.projectId).pipe(
+      Effect.flatMap((project) =>
+        git.execute({
+          operation: "sandbox.hasSource",
+          cwd: project.workspaceRoot,
+          args: ["cat-file", "-e", `${submission.source.commit}^{commit}`],
+          allowNonZeroExit: true,
+        }),
+      ),
+      Effect.map((result) => result.exitCode === 0),
+      Effect.orElseSucceed(() => false),
+    );
   // Saved sandboxes live in the host's T3 home, next to its settings and secrets.
   const saves = yield* makeSandboxSaves(path.join(path.dirname(config.settingsPath), "sandboxes"));
   const provisioner = yield* makeSpritesProvisioner(
     null,
     resolveSource,
     packSource,
+    hasSource,
     saves,
     (credential) =>
       makeSpritesClient(credential).pipe(
