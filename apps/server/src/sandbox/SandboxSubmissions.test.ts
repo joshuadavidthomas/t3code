@@ -9,6 +9,8 @@ import {
   ProviderInstanceId,
   ORCHESTRATION_PROTOCOL_VERSION,
   SandboxSubmissionError,
+  type OrchestrationShellSnapshot,
+  type OrchestrationThreadShell,
   type SandboxRuntimeManifest,
   type SandboxSubmissionListEvent,
   type SandboxSubmitInput,
@@ -30,9 +32,11 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { makeSandboxConfiguration } from "./SandboxConfiguration.ts";
 import {
   makeSandboxSubmissions,
+  SANDBOX_PROVISION_STAGES,
   type SandboxCapturedSecrets,
   toSandboxSubmission,
   type SandboxProvisioner,
+  withSavedSandboxes,
 } from "./SandboxSubmissions.ts";
 
 const instanceId = ProviderInstanceId.make("claude-personal");
@@ -811,5 +815,77 @@ it.effect("streams an initial list snapshot, additions, compact progress, and re
     yield* settled(service, second.commandId);
     yield* service.remove(second.commandId);
     expect((yield* Queue.take(removals)).commandId).toBe(second.commandId);
+  }).pipe(Effect.scoped, Effect.provide(dependencies)),
+);
+
+it.effect("saves a finished sandbox to the host and restores it for one of its threads", () =>
+  Effect.gen(function* () {
+    const { configurations, input } = yield* setup;
+    const thread = {
+      id: input.threadId,
+      projectId: ProjectId.make("sandbox-project"),
+      title: "Fix parser",
+      modelSelection: input.modelSelection,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+      pullRequests: [],
+      branch: "main",
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+      archivedAt: "2026-01-02T00:00:00.000Z",
+      settledOverride: null,
+      settledAt: null,
+      session: null,
+      latestUserMessageAt: "2026-01-01T00:00:00.000Z",
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    } satisfies OrchestrationThreadShell;
+    const archived = {
+      snapshotSequence: 4,
+      projects: [],
+      threads: [thread],
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    };
+    const restoredStages: string[] = [];
+    const service = yield* makeSandboxSubmissions(configurations, {
+      ...baseProvisioner,
+      save: () => Effect.succeed(archived),
+      stage: (stage, value) =>
+        Effect.sync(() => {
+          if (value.saved) restoredStages.push(stage);
+        }),
+    });
+    yield* service.submit(input);
+    yield* settled(service, input.commandId);
+    const saved = yield* service.save(input.commandId);
+    expect(saved.saved?.archived).toEqual(archived);
+    expect(toSandboxSubmission(saved).savedAt).toBe(saved.saved?.at);
+
+    // The host serves the saved thread as its own archived thread, in the launching project.
+    const hostProject = { id: input.projectId } as OrchestrationShellSnapshot["projects"][number];
+    const merged = withSavedSandboxes(
+      { snapshotSequence: 1, projects: [hostProject], threads: [], updatedAt: thread.updatedAt },
+      yield* service.savedArchives,
+    );
+    expect(merged.threads).toEqual([
+      {
+        ...thread,
+        projectId: input.projectId,
+        savedSandbox: { commandId: input.commandId, name: input.title },
+      },
+    ]);
+    expect(
+      (yield* Effect.flip(service.restore(input.commandId, ThreadId.make("elsewhere")))).message,
+    ).toBe("This thread isn't in the saved sandbox.");
+
+    yield* service.restore(input.commandId, input.threadId);
+    const restored = yield* settled(service, input.commandId);
+    expect(restored.progress.phase).toBe("done");
+    expect(restoredStages).toEqual([...SANDBOX_PROVISION_STAGES]);
+    expect(restored.saved).toBeUndefined();
+    expect(yield* service.savedArchives).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(dependencies)),
 );

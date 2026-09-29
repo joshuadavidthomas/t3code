@@ -123,7 +123,11 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { SandboxConfigurations } from "./sandbox/SandboxConfiguration.ts";
-import { SandboxSubmissions, toSandboxSubmission } from "./sandbox/SandboxSubmissions.ts";
+import {
+  SandboxSubmissions,
+  toSandboxSubmission,
+  withSavedSandboxes,
+} from "./sandbox/SandboxSubmissions.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -2173,6 +2177,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
             projectionSnapshotQuery.getArchivedShellSnapshot().pipe(
+              // Saved sandboxes keep their archived threads here until restored.
+              Effect.flatMap((snapshot) =>
+                sandboxSubmissions.savedArchives.pipe(
+                  Effect.map((saved) => withSavedSandboxes(snapshot, saved)),
+                ),
+              ),
               Effect.tapError((cause) =>
                 Effect.logError("orchestration archived shell snapshot load failed", { cause }),
               ),
@@ -2651,6 +2661,16 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.sandboxDeleteSubmission,
             sandboxSubmissions.remove(commandId).pipe(Effect.map(toSandboxSubmission)),
+          ),
+        [WS_METHODS.sandboxSaveSubmission]: ({ commandId }) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxSaveSubmission,
+            sandboxSubmissions.save(commandId).pipe(Effect.map(toSandboxSubmission)),
+          ),
+        [WS_METHODS.sandboxRestoreSubmission]: ({ commandId, threadId }) =>
+          observeRpcEffect(
+            WS_METHODS.sandboxRestoreSubmission,
+            sandboxSubmissions.restore(commandId, threadId).pipe(Effect.map(toSandboxSubmission)),
           ),
         [WS_METHODS.sandboxSubscribeSubmission]: ({ commandId }) =>
           observeRpcStream(

@@ -56,6 +56,12 @@ export function sandboxResourceLabel(submission: SandboxSubmission) {
 
 export function sandboxResourceStatus(submission: SandboxSubmission) {
   if (submission.deletionError) return `Delete failed: ${submission.deletionError}`;
+  if (submission.savedAt)
+    return submission.progress.phase === "running"
+      ? "Restoring"
+      : submission.progress.phase === "failed"
+        ? `Restore failed: ${submission.progress.error ?? "unknown error"}`
+        : "Saved";
   switch (submission.progress.phase) {
     case "done":
       return submission.destination ? "Ready" : "Finishing setup";
@@ -159,7 +165,10 @@ function SandboxOwnerResources({
     .map((submission) => {
       const commandId = submission.input.commandId;
       const busy = pending !== null;
-      const done = submission.progress.phase === "done" && submission.destination !== null;
+      const done =
+        submission.progress.phase === "done" &&
+        submission.destination !== null &&
+        !submission.savedAt;
       const connectable =
         done &&
         !environments.some(

@@ -9,7 +9,12 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { ModelSelection, ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
+import {
+  ModelSelection,
+  OrchestrationShellSnapshot,
+  ProviderInteractionMode,
+  RuntimeMode,
+} from "./orchestration.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 import { ServerProviderModel } from "./server.ts";
 import { WorktreeSetupSnapshot } from "./worktreeSetup.ts";
@@ -104,6 +109,15 @@ export const SandboxSubmissionRecord = Schema.Struct({
   destination: Schema.NullOr(SandboxDestination),
   /** The provider's own name for the sandbox, once it exists. */
   resourceName: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * Set while the sandbox is saved to the host and deleted: its archived threads,
+   * served as this host's own until one is unarchived and the sandbox restored.
+   */
+  saved: Schema.optionalKey(
+    Schema.Struct({ at: IsoDateTime, archived: OrchestrationShellSnapshot }),
+  ),
+  /** The thread a restore unarchives once the sandbox is back. */
+  restoreThreadId: Schema.optionalKey(ThreadId),
   /** Once intake starts, retry reconciles its receipt; cancellation is too late. */
   intakeStarted: Schema.Boolean,
   cancelRequested: Schema.Boolean,
@@ -124,6 +138,8 @@ export const SandboxSubmission = Schema.Struct({
   progress: WorktreeSetupSnapshot,
   destination: Schema.NullOr(SandboxDestination),
   resourceName: Schema.optionalKey(TrimmedNonEmptyString),
+  /** When the sandbox was saved to the host and deleted; null once restored. */
+  savedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   intakeStarted: Schema.Boolean,
   cancelRequested: Schema.Boolean,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -135,6 +151,8 @@ export const SandboxSubmissionUpdate = Schema.Struct({
   commandId: CommandId,
   progress: WorktreeSetupSnapshot,
   destination: Schema.NullOr(SandboxDestination),
+  resourceName: Schema.optionalKey(TrimmedNonEmptyString),
+  savedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   intakeStarted: Schema.Boolean,
   cancelRequested: Schema.Boolean,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -169,6 +187,8 @@ export const SandboxSubmissionListEvent = Schema.Union([
 ]);
 export type SandboxSubmissionListEvent = typeof SandboxSubmissionListEvent.Type;
 export const SandboxSubmissionInput = Schema.Struct({ commandId: CommandId });
+/** Unarchiving a saved sandbox's thread restores the sandbox, then that thread. */
+export const SandboxRestoreInput = Schema.Struct({ commandId: CommandId, threadId: ThreadId });
 export const SandboxLaunchOptionsInput = Schema.Struct({
   configurationId: Schema.String.check(Schema.isUUID(4)),
 });

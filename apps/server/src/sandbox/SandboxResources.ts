@@ -163,6 +163,23 @@ export const makeSandboxResources = Effect.fnUntraced(function* () {
     return yield* get(commandId);
   });
 
+  /** A saved sandbox's Sprite is gone; its restore creates one under the same name,
+   * so the environment keeps its URL, and may run a newer runtime. */
+  const releaseSprite = Effect.fnUntraced(function* (commandId: CommandId) {
+    yield* get(commandId);
+    yield* sql`UPDATE sandbox_resources SET sprite_id = NULL, sprite_url = NULL
+      WHERE command_id = ${commandId}`.pipe(Effect.mapError(storageFailure));
+  });
+  const prepareRestore = Effect.fnUntraced(function* (
+    commandId: CommandId,
+    artifactIntegrity: string,
+  ) {
+    const current = yield* get(commandId);
+    if (current.deletedAt) return yield* failure("conflict", "Sandbox resource has been deleted.");
+    yield* sql`UPDATE sandbox_resources SET artifact_integrity = ${artifactIntegrity}
+      WHERE command_id = ${commandId}`.pipe(Effect.mapError(storageFailure));
+  });
+
   return {
     getOrCreate,
     get,
@@ -170,6 +187,8 @@ export const makeSandboxResources = Effect.fnUntraced(function* () {
     bindSprite,
     bindDestination,
     markDeleted,
+    releaseSprite,
+    prepareRestore,
   } as const;
 });
 

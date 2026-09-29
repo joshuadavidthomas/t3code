@@ -41,6 +41,15 @@ export interface SpritesClient {
     remotePath: string,
     body: Uint8Array,
   ) => Effect.Effect<void, SandboxSubmissionError>;
+  readonly download: (
+    name: string,
+    remotePath: string,
+  ) => Effect.Effect<Uint8Array, SandboxSubmissionError>;
+  /** Stops a service and waits until it has exited. */
+  readonly stopService: (
+    name: string,
+    serviceName: string,
+  ) => Effect.Effect<void, SandboxSubmissionError>;
   readonly putService: (
     name: string,
     serviceName: string,
@@ -226,6 +235,24 @@ export const makeSpritesClient = Effect.fn("SpritesClient.make")(function* (cred
     );
   };
 
+  const download: SpritesClient["download"] = (name, remotePath) => {
+    // The SDK's readFile uses GET /fs/read with the same parameters as writeFile.
+    const url = new URL(`${API}/sprites/${path(name)}/fs/read`);
+    url.searchParams.set("path", remotePath);
+    url.searchParams.set("workingDir", "/home/sprite");
+    return checked(HttpClientRequest.get(url.toString())).pipe(
+      Effect.flatMap((response) => response.arrayBuffer),
+      Effect.map((buffer) => new Uint8Array(buffer)),
+      Effect.mapError(() => unavailable("Sprite file could not be read.")),
+    );
+  };
+
+  // The response streams until the service has exited, killed or not.
+  const stopService: SpritesClient["stopService"] = (name, serviceName) =>
+    checked(
+      HttpClientRequest.post(`${API}/sprites/${path(name)}/services/${path(serviceName)}/stop`),
+    ).pipe(Effect.flatMap(boundedText), Effect.asVoid);
+
   const putService: SpritesClient["putService"] = (name, serviceName, service) =>
     checked(
       HttpClientRequest.put(`${API}/sprites/${path(name)}/services/${path(serviceName)}`).pipe(
@@ -251,5 +278,15 @@ export const makeSpritesClient = Effect.fn("SpritesClient.make")(function* (cred
       Effect.asVoid,
     );
 
-  return { find, create, remove, makeUrlPublic, exec, upload, putService } satisfies SpritesClient;
+  return {
+    find,
+    create,
+    remove,
+    makeUrlPublic,
+    exec,
+    upload,
+    download,
+    stopService,
+    putService,
+  } satisfies SpritesClient;
 });

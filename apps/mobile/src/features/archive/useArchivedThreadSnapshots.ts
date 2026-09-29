@@ -43,5 +43,17 @@ export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<Environ
     }
   }, [environmentIds]);
 
-  return { ...result, refresh };
+  // Restoring a saved sandbox is on web and desktop, so its threads stay out of this list.
+  const snapshots = useMemo(
+    () =>
+      result.snapshots.map((entry) => ({
+        ...entry,
+        snapshot: {
+          ...entry.snapshot,
+          threads: entry.snapshot.threads.filter((thread) => !thread.savedSandbox),
+        },
+      })),
+    [result.snapshots],
+  );
+  return { ...result, snapshots, refresh };
 }

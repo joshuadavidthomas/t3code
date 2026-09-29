@@ -65,6 +65,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.sandboxRetrySubmission]: AuthOrchestrationOperateScope,
   [WS_METHODS.sandboxCancelSubmission]: AuthOrchestrationOperateScope,
   [WS_METHODS.sandboxDeleteSubmission]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sandboxSaveSubmission]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sandboxRestoreSubmission]: AuthOrchestrationOperateScope,
   [WS_METHODS.sandboxSubscribeSubmission]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthOrchestrationOperateScope,

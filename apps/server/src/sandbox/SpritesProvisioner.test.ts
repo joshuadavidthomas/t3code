@@ -21,6 +21,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as SandboxResources from "./SandboxResources.ts";
 import { makeSandboxRuntimeManifest } from "./SandboxRuntime.ts";
 import { SANDBOX_PROVISION_STAGES } from "./SandboxSubmissions.ts";
+import type { SandboxSaves } from "./SandboxSaves.ts";
 import type { SpritesClient } from "./SpritesClient.ts";
 import { makeSpritesProvisioner } from "./SpritesProvisioner.ts";
 
@@ -81,6 +82,12 @@ const dependencies = SandboxResources.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
+const memorySaves = (store = new Map<string, Uint8Array>()): SandboxSaves => ({
+  write: (commandId, archive) => Effect.sync(() => void store.set(commandId, archive)),
+  read: (commandId) => Effect.sync(() => store.get(commandId) ?? new Uint8Array()),
+  remove: (commandId) => Effect.sync(() => void store.delete(commandId)),
+});
+
 it.effect(
   "reconciles a lost create response with the persisted prefixed name after reopening",
   () =>
@@ -105,6 +112,8 @@ it.effect(
         makeUrlPublic: () => Effect.void,
         exec: () => Effect.succeed(""),
         upload: () => Effect.void,
+        download: () => Effect.succeed(new Uint8Array()),
+        stopService: () => Effect.void,
         putService: () => Effect.void,
       };
       const open = () =>
@@ -112,6 +121,7 @@ it.effect(
           { runtime, archivePath: "/unused" },
           () => Effect.succeed(submission.source),
           () => Effect.succeed(new Uint8Array()),
+          memorySaves(),
           () => Effect.succeed(client),
         );
       const prefixed = { ...captured, namePrefix: "orb-" };
@@ -147,12 +157,15 @@ it.effect(
         makeUrlPublic: () => Effect.void,
         exec: () => Effect.succeed(""),
         upload: () => Effect.void,
+        download: () => Effect.succeed(new Uint8Array()),
+        stopService: () => Effect.void,
         putService: () => Effect.void,
       };
       const provisioner = yield* makeSpritesProvisioner(
         null,
         () => Effect.succeed(submission.source),
         () => Effect.succeed(new Uint8Array()),
+        memorySaves(),
         (credential) => {
           expect(credential).toBe(captured.credential);
           return Effect.succeed(client);
@@ -208,6 +221,8 @@ it.effect("verifies the runtime before starting intake and preserves the destina
         Effect.sync(() => {
           operations.push("service");
         }),
+      download: () => Effect.succeed(new Uint8Array()),
+      stopService: () => Effect.void,
       exec: (_name, script, input) =>
         Effect.sync(() => {
           if (script.includes("sandbox-runtime.json")) deployments.push(input);
@@ -235,6 +250,7 @@ it.effect("verifies the runtime before starting intake and preserves the destina
       { runtime: { ...runtime, id: "current-runtime" }, archivePath },
       () => Effect.succeed(submission.source),
       () => Effect.succeed(new Uint8Array([4, 5, 6])),
+      memorySaves(),
       (credential) => {
         expect(credential).toBe(captured.credential);
         return Effect.succeed(client);
@@ -305,5 +321,112 @@ it.effect("verifies the runtime before starting intake and preserves the destina
     );
     expect(seedScripts[1]).toContain("git config --global user.name 'Ada Lovelace'");
     expect(seedScripts[1]).toContain("git config --global user.email 'ada@example.com'");
+  }).pipe(Effect.scoped, Effect.provide(dependencies)),
+);
+
+it.effect("saves a sandbox to the host and restores it under the same name", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const archivePath = yield* fs.makeTempFileScoped();
+    yield* fs.writeFile(archivePath, new Uint8Array([1, 2, 3]));
+    const store = new Map<string, Uint8Array>();
+    const saved = new Uint8Array([7, 7, 7]);
+    const archived = {
+      snapshotSequence: 3,
+      projects: [],
+      threads: [],
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    };
+    const operations: string[] = [];
+    const scripts: { script: string; input: string }[] = [];
+    let sprite: { id: string; url: string } | null = null;
+    let created = 0;
+    const client: SpritesClient = {
+      find: () => Effect.sync(() => sprite),
+      create: (name) =>
+        Effect.sync(() => {
+          created++;
+          sprite = { id: `sprite-${created}`, url: `https://${name}.example` };
+          return sprite;
+        }),
+      remove: () =>
+        Effect.sync(() => {
+          operations.push("remove");
+          sprite = null;
+        }),
+      makeUrlPublic: () => Effect.void,
+      upload: (_name, path, body) =>
+        Effect.sync(() => {
+          operations.push(`upload ${path.split("/").pop()!.split("-")[0]}`);
+          if (path.includes("restore-")) expect(body).toEqual(saved);
+        }),
+      download: () =>
+        Effect.sync(() => {
+          operations.push("download");
+          return saved;
+        }),
+      stopService: () => Effect.sync(() => void operations.push("stop")),
+      putService: () => Effect.void,
+      exec: (_name, script, input) =>
+        Effect.sync(() => {
+          scripts.push({ script, input });
+          if (script.includes("/api/sandbox/save")) return encode(archived);
+          if (
+            script.includes("sandbox-runtime-manifest") ||
+            script.includes("/api/sandbox/runtime")
+          )
+            return encode(runtime);
+          if (script.includes("/api/sandbox/intake")) return encode(destination);
+          return "";
+        }),
+    };
+    const provisioner = yield* makeSpritesProvisioner(
+      { runtime, archivePath },
+      () => Effect.succeed(submission.source),
+      () => Effect.succeed(new Uint8Array([4])),
+      memorySaves(store),
+      () => Effect.succeed(client),
+    );
+    for (const stage of SANDBOX_PROVISION_STAGES)
+      yield* provisioner.stage(stage, submission, captured);
+    yield* provisioner.intake(submission, captured);
+    const resources = yield* SandboxResources.SandboxResources;
+    const { name } = yield* resources.get(submission.input.commandId);
+
+    operations.length = 0;
+    expect(yield* provisioner.save(submission, captured.credential)).toEqual(archived);
+    // Stopped before archiving, so the database is consistent, then deleted.
+    expect(operations).toEqual(["stop", "download", "remove"]);
+    expect(scripts.some((entry) => entry.script.includes("tar -czf"))).toBe(true);
+    expect([...store.values()]).toEqual([saved]);
+    expect((yield* resources.get(submission.input.commandId)).sprite).toBeNull();
+
+    operations.length = 0;
+    scripts.length = 0;
+    const restoring = {
+      ...submission,
+      saved: { at: "2026-01-02T00:00:00.000Z", archived },
+      restoreThreadId: submission.input.threadId,
+    };
+    for (const stage of SANDBOX_PROVISION_STAGES)
+      yield* provisioner.stage(stage, restoring, captured);
+    // Same name, so the environment comes back at the same URL.
+    expect(sprite).toEqual({ id: "sprite-2", url: `https://${name}.example` });
+    // The save replaces the seed pack; the runtime installs as usual.
+    expect(operations).toEqual(["upload runtime", "upload restore"]);
+    expect(scripts.some((entry) => entry.script.includes("tar -xzf"))).toBe(true);
+    expect(scripts.some((entry) => entry.script.includes("index-pack"))).toBe(false);
+    expect(yield* provisioner.intake(restoring, captured)).toEqual(destination);
+    expect(scripts.at(-1)!.script).toContain("/api/sandbox/unarchive");
+    expect(scripts.at(-1)!.input).toBe(encode({ threadId: submission.input.threadId }));
+    expect(store.size).toBe(0);
+
+    // Deleting a saved sandbox deletes its save; there is no Sprite left to remove.
+    yield* provisioner.save(submission, captured.credential);
+    operations.length = 0;
+    yield* provisioner.delete(restoring, captured.credential);
+    expect(operations).toEqual([]);
+    expect(store.size).toBe(0);
+    expect((yield* resources.get(submission.input.commandId)).deletedAt).not.toBeNull();
   }).pipe(Effect.scoped, Effect.provide(dependencies)),
 );

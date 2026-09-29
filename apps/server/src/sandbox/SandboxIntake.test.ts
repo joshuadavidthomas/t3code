@@ -11,6 +11,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type SandboxRuntimeManifest,
+  SandboxSubmissionError,
   type SandboxSubmissionRecord,
   ThreadId,
 } from "@t3tools/contracts";
@@ -206,11 +207,20 @@ describe("SandboxIntake", () => {
             return { sequence: dispatched.length };
           }),
       });
-      const routes = makeSandboxIntakeRoutes(runtime, (request) =>
-        intake.accept({
-          ...input,
-          ...request,
-        }),
+      const unarchived: string[] = [];
+      const routes = makeSandboxIntakeRoutes(
+        runtime,
+        (request) =>
+          intake.accept({
+            ...input,
+            ...request,
+          }),
+        {
+          savable: Effect.fail(
+            new SandboxSubmissionError({ code: "conflict", message: "Still active." }),
+          ),
+          unarchive: (threadId) => Effect.sync(() => void unarchived.push(threadId)),
+        },
       ).pipe(
         Layer.provideMerge(
           Layer.mock(EnvironmentAuth, {
@@ -271,6 +281,28 @@ describe("SandboxIntake", () => {
         "thread.message.user.append",
         "thread.turn.start",
       ]);
+      // Saving reports why it can't, and restoring needs operate access.
+      const save = yield* Effect.promise(() =>
+        handler(
+          new Request("http://runtime.test/api/sandbox/save", {
+            headers: { authorization: "Bearer read" },
+          }),
+        ),
+      );
+      assert.strictEqual(save.status, 409);
+      const unarchive = (token: string) =>
+        Effect.promise(() =>
+          handler(
+            new Request("http://runtime.test/api/sandbox/unarchive", {
+              method: "POST",
+              headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+              body: `{"threadId":"${submission.input.threadId}"}`,
+            }),
+          ),
+        );
+      assert.strictEqual((yield* unarchive("read")).status, 403);
+      assert.strictEqual((yield* unarchive("write")).status, 204);
+      assert.deepStrictEqual(unarchived, [submission.input.threadId]);
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 

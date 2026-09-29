@@ -248,7 +248,7 @@ export function useThreadActions() {
   const readArchivedShells = useAtomCommand(orchestrationEnvironment.readArchivedShellSnapshot, {
     reportFailure: false,
   });
-  const { findLaunch: findSandboxLaunch, deleteSandbox } = useSandboxCleanup();
+  const { findLaunch: findSandboxLaunch, deleteSandbox, saveSandbox } = useSandboxCleanup();
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
@@ -306,6 +306,37 @@ export function useThreadActions() {
     [router, unarchiveThreadMutation],
   );
 
+  // Archiving the last thread in a sandbox frees the machine, as worktree cleanup does:
+  // once Undo has passed, its host saves it and deletes it. Unarchiving restores it.
+  const saveSandboxOnceArchived = useCallback(
+    async (threadRef: ScopedThreadRef, claim: ReturnType<typeof ThreadUndo.begin>) => {
+      if (claim.isCurrent())
+        await new Promise<void>((resolve) => {
+          const stop = ThreadUndo.subscribe(() => {
+            if (claim.isCurrent()) return;
+            stop();
+            resolve();
+          });
+        });
+      if (
+        readThreadShell(threadRef) !== null ||
+        readEnvironmentThreadRefs(threadRef.environmentId).length > 0
+      )
+        return;
+      const sandbox = await findSandboxLaunch(threadRef.environmentId);
+      const error = sandbox ? await saveSandbox(sandbox) : null;
+      if (error)
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Couldn't save the sandbox",
+            description: error,
+          }),
+        );
+    },
+    [findSandboxLaunch, saveSandbox],
+  );
+
   const archiveThread = useCallback(
     async (target: ScopedThreadRef, opts: { onArchived?: () => void } = {}) => {
       const resolved = resolveThreadTarget(target);
@@ -348,6 +379,7 @@ export function useThreadActions() {
         undo: () => unarchiveThread(threadRef, { navigate: shouldNavigateToDraft }),
         failureTitle: "Failed to undo archive",
       });
+      void saveSandboxOnceArchived(threadRef, action);
 
       if (shouldNavigateToDraft) {
         const navigationResult = await settlePromise(() =>
@@ -366,6 +398,7 @@ export function useThreadActions() {
       getCurrentRouteThreadRef,
       markThreadVisited,
       resolveThreadTarget,
+      saveSandboxOnceArchived,
       unarchiveThread,
     ],
   );

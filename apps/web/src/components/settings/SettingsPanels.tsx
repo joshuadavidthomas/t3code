@@ -1,17 +1,27 @@
 import { SettingsGroup } from "./SettingsGroup";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
-import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  CheckIcon,
+  ChevronRightIcon,
+  CloudIcon,
+  SettingsIcon,
+} from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
+  type EnvironmentId,
+  type OrchestrationThreadShell,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -143,6 +153,7 @@ import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useSandboxCleanup } from "../useSandbox";
 import { ThemeLibrary } from "./ThemeSettings";
 import {
   backgroundActivityOverrideSettings,
@@ -3279,9 +3290,17 @@ export function GeneralSettingsPanel() {
   );
 }
 
+type ArchivedThreadRow = {
+  readonly id: ThreadId;
+  readonly title: string;
+  readonly environmentId: EnvironmentId;
+  readonly savedSandbox?: OrchestrationThreadShell["savedSandbox"] | undefined;
+};
+
 export function ArchivedThreadsPanel() {
   const { scope } = useSettingsScope();
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
+  const { restoreSandbox, deleteSandbox } = useSandboxCleanup();
   const {
     snapshots: archivedSnapshots,
     error: archiveError,
@@ -3340,8 +3359,63 @@ export function ArchivedThreadsPanel() {
     return groups;
   }, [archivedSnapshots, scope]);
 
+  const reportFailure = useCallback((title: string, error: unknown) => {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title,
+        description: error instanceof Error ? error.message : String(error ?? "An error occurred."),
+      }),
+    );
+  }, []);
+  // A saved sandbox's thread lives on its host until unarchiving restores the sandbox.
+  const unarchive = useCallback(
+    async (thread: ArchivedThreadRow) => {
+      if (thread.savedSandbox) {
+        const error = await restoreSandbox(
+          thread.environmentId,
+          thread.savedSandbox.commandId,
+          thread.id,
+        );
+        if (error) return reportFailure("Failed to unarchive thread", new Error(error));
+        toastManager.add({
+          type: "success",
+          title: `Restoring ${thread.savedSandbox.name}`,
+          description: "The thread returns once its sandbox is back.",
+        });
+        refreshArchivedThreads();
+        return;
+      }
+      const result = await unarchiveThread(scopeThreadRef(thread.environmentId, thread.id));
+      if (result._tag === "Success") refreshArchivedThreads();
+      else if (!isAtomCommandInterrupted(result))
+        reportFailure("Failed to unarchive thread", squashAtomCommandFailure(result));
+    },
+    [refreshArchivedThreads, reportFailure, restoreSandbox, unarchiveThread],
+  );
+  const remove = useCallback(
+    async (thread: ArchivedThreadRow) => {
+      if (thread.savedSandbox) {
+        const confirmed = await readLocalApi()?.dialogs.confirm(
+          `Delete thread "${thread.title}"?\nIts saved sandbox ${thread.savedSandbox.name} is deleted too, including its files.`,
+          { variant: "destructive" },
+        );
+        if (!confirmed) return;
+        const error = await deleteSandbox(thread.environmentId, thread.savedSandbox.commandId);
+        if (error) return reportFailure("Failed to delete thread", new Error(error));
+        refreshArchivedThreads();
+        return;
+      }
+      const result = await confirmAndDeleteThread(scopeThreadRef(thread.environmentId, thread.id));
+      if (result._tag === "Success") refreshArchivedThreads();
+      else if (!isAtomCommandInterrupted(result))
+        reportFailure("Failed to delete thread", squashAtomCommandFailure(result));
+    },
+    [confirmAndDeleteThread, deleteSandbox, refreshArchivedThreads, reportFailure],
+  );
+
   const handleArchivedThreadContextMenu = useCallback(
-    async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+    async (thread: ArchivedThreadRow, position: { x: number; y: number }) => {
       const api = readLocalApi();
       if (!api) return;
       const clicked = await api.contextMenu.show(
@@ -3351,41 +3425,10 @@ export function ArchivedThreadsPanel() {
         ],
         position,
       );
-
-      if (clicked === "unarchive") {
-        const result = await unarchiveThread(threadRef);
-        if (result._tag === "Success") {
-          refreshArchivedThreads();
-        } else if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to unarchive thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-        return;
-      }
-
-      if (clicked === "delete") {
-        const result = await confirmAndDeleteThread(threadRef);
-        if (result._tag === "Success") {
-          refreshArchivedThreads();
-        } else if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to delete thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-      }
+      if (clicked === "unarchive") await unarchive(thread);
+      if (clicked === "delete") await remove(thread);
     },
-    [confirmAndDeleteThread, refreshArchivedThreads, unarchiveThread],
+    [remove, unarchive],
   );
 
   return (
@@ -3432,13 +3475,10 @@ export function ArchivedThreadsPanel() {
                   event.preventDefault();
                   void (async () => {
                     const result = await settlePromise(() =>
-                      handleArchivedThreadContextMenu(
-                        scopeThreadRef(thread.environmentId, thread.id),
-                        {
-                          x: event.clientX,
-                          y: event.clientY,
-                        },
-                      ),
+                      handleArchivedThreadContextMenu(thread, {
+                        x: event.clientX,
+                        y: event.clientY,
+                      }),
                     );
                     if (result._tag === "Failure") {
                       const error = squashAtomCommandFailure(result);
@@ -3453,7 +3493,28 @@ export function ArchivedThreadsPanel() {
                     }
                   })();
                 }}
-                title={thread.title}
+                title={
+                  thread.savedSandbox ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      {thread.title}
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <CloudIcon
+                              className="size-3.5 text-muted-foreground"
+                              aria-label="Saved sandbox"
+                            />
+                          }
+                        />
+                        <TooltipPopup side="top">
+                          Saved from sandbox {thread.savedSandbox.name}. Unarchiving restores it.
+                        </TooltipPopup>
+                      </Tooltip>
+                    </span>
+                  ) : (
+                    thread.title
+                  )
+                }
                 description={
                   <>
                     Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
@@ -3467,28 +3528,7 @@ export function ArchivedThreadsPanel() {
                     variant="outline"
                     size="xs"
                     className="shrink-0"
-                    onClick={() => {
-                      void (async () => {
-                        const result = await unarchiveThread(
-                          scopeThreadRef(thread.environmentId, thread.id),
-                        );
-                        if (result._tag === "Success") {
-                          refreshArchivedThreads();
-                          return;
-                        }
-                        if (!isAtomCommandInterrupted(result)) {
-                          const error = squashAtomCommandFailure(result);
-                          toastManager.add(
-                            stackedThreadToast({
-                              type: "error",
-                              title: "Failed to unarchive thread",
-                              description:
-                                error instanceof Error ? error.message : "An error occurred.",
-                            }),
-                          );
-                        }
-                      })();
-                    }}
+                    onClick={() => void unarchive(thread)}
                   >
                     <ArchiveX className="size-3.5" />
                     <span>Unarchive</span>

@@ -39,6 +39,13 @@ leaves any remote environment, by pushing.
 [SandboxSource](../../apps/server/src/sandbox/SandboxSource.ts) pins and packs
 the commit.
 
+A sandbox whose threads are all archived is saved to its host and deleted. The
+save is its T3 state directory, provider transcripts and workspace, copied as
+they are, so a restore on a new Sprite under the same name comes back as the
+same environment: same URL, environment ID, threads and client sessions, and
+provider sessions resume from their own transcripts. Only the runtime is new.
+Until then the host serves the saved threads as its own archived threads.
+
 ## Hosted web is a client
 
 The hosted web app stores its connection catalog in the browser and connects

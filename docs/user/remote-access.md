@@ -28,10 +28,16 @@ This first version supports Claude, and the initial message must be text only.
 Mobile can continue a paired sandbox thread; creation is on web and desktop.
 
 An idle sandbox sleeps but keeps its files, which your provider may charge to
-store. Like a worktree, it stays when you settle or archive its thread. Deleting
-the last thread in a sandbox offers to delete the sandbox too; with **Delete
-worktrees with deleted threads** on, it's deleted without asking once all its
-work is pushed. Discarding a failed launch deletes its sandbox.
+store. Settling its thread keeps it as it is. Archiving the last thread in a
+sandbox saves the sandbox to the machine that launched it and deletes it.
+Unarchiving that thread from **Settings → Archived threads**, on web or desktop,
+restores the sandbox with its conversation and files, including uncommitted
+changes. Dependency folders such as `node_modules` aren't saved, so reinstall
+them.
+
+Deleting the last thread in a sandbox offers to delete the sandbox too; with
+**Delete worktrees with deleted threads** on, it's deleted without asking once
+all its work is pushed. Discarding a failed launch deletes its sandbox.
 
 Manage sandboxes under **Settings → Connections**. **Connect** opens an
 existing sandbox; **Delete sandbox** removes it along with its threads. Removing

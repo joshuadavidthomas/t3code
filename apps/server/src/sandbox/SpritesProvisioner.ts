@@ -1,4 +1,5 @@
 import {
+  OrchestrationShellSnapshot,
   type ProviderInstanceConfigMap,
   SandboxDestination,
   SandboxRuntimeManifest,
@@ -15,6 +16,7 @@ import type { loadSandboxArtifact } from "./SandboxArtifact.ts";
 import { SANDBOX_WORKSPACE_ROOT } from "./SandboxDeployment.ts";
 import { SandboxIntakeRequest } from "./SandboxIntakeRoutes.ts";
 import { SandboxResources } from "./SandboxResources.ts";
+import type { SandboxSaves } from "./SandboxSaves.ts";
 import { makeSandboxRuntimeCatalog } from "./SandboxRuntime.ts";
 import type { SandboxProvisioner, SandboxSourcePacker } from "./SandboxSubmissions.ts";
 import type { SpritesClient } from "./SpritesClient.ts";
@@ -27,6 +29,9 @@ const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const failure = (message: string) => new SandboxSubmissionError({ code: "unavailable", message });
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeRuntime = Schema.decodeUnknownEffect(Schema.fromJsonString(SandboxRuntimeManifest));
+const decodeArchived = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationShellSnapshot),
+);
 const decodeDestination = Schema.decodeUnknownEffect(Schema.fromJsonString(SandboxDestination));
 const encodeIntake = Schema.encodeEffect(Schema.fromJsonString(SandboxIntakeRequest));
 const decodePairing = Schema.decodeUnknownEffect(
@@ -57,13 +62,35 @@ node -e ${quote(`const fs = require('node:fs');
 const http = require('node:http');
 const token = JSON.parse(fs.readFileSync('${ROOT}/control-session.json', 'utf8')).token;
 const req = http.request({host:'127.0.0.1',port:8080,path:'${path}',method:'${method}',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'}}, res => {
-  if(res.statusCode !== 200) { res.resume(); process.exitCode=1; return; }
+  if(res.statusCode < 200 || res.statusCode > 299) { res.resume(); process.exitCode=1; return; }
   res.pipe(process.stdout);
 });
 req.setTimeout(60000, () => req.destroy());
 req.on('error', () => {process.exitCode=1});
 process.stdin.pipe(req);`)}
 `;
+
+const T3_SERVICE = {
+  cmd: `${ROOT}/runtime/t3`,
+  args: [
+    "serve",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "8080",
+    "--no-browser",
+    "--base-dir",
+    `${ROOT}/state`,
+  ],
+  env: { PATH: `${ROOT}/providers/bin:/usr/local/bin:/usr/bin:/bin` },
+  dir: WORKSPACE,
+  http_port: 8080,
+};
+
+// Everything a restore needs besides the runtime: T3's state, which keeps the environment
+// and its threads, the providers' transcripts, and the workspace. Ignored node_modules
+// folders are left out and reinstall.
+const SAVED_PATHS = ["home/sprite/t3/state", "home/sprite/.claude", WORKSPACE.slice(1)];
 
 // The Sprite image ships its own older Claude on the login shell's PATH, which T3
 // puts ahead of the service PATH, so name the pinned install explicitly.
@@ -88,6 +115,7 @@ export const makeSpritesProvisioner = Effect.fnUntraced(function* (
   artifact: Effect.Success<ReturnType<typeof loadSandboxArtifact>> | null,
   resolveSource: SandboxProvisioner["resolveSource"],
   packSource: SandboxSourcePacker,
+  saves: SandboxSaves,
   client: (credential: string) => Effect.Effect<SpritesClient>,
   resolveArtifact: (
     runtime: typeof SandboxRuntimeManifest.Type,
@@ -109,6 +137,12 @@ export const makeSpritesProvisioner = Effect.fnUntraced(function* (
       );
       if (!selectedClaude || selectedArtifact.runtime.providers.length !== 1)
         return yield* failure("Sandbox artifact provider is unavailable or unsupported.");
+      // A restore runs the host's current runtime on the saved state.
+      if (submission.saved)
+        yield* resources.prepareRestore(
+          submission.input.commandId,
+          selectedArtifact.runtime.artifactIntegrity,
+        );
       const resource = yield* resources.getOrCreate(submission, secrets.namePrefix);
       const sprites = yield* client(secrets.credential);
       if (stage === "create") {
@@ -160,6 +194,19 @@ runtime/t3 sandbox-runtime-manifest --artifact-integrity ${quote(selectedArtifac
         return;
       }
       if (stage === "server") {
+        if (submission.saved) {
+          const upload = `restore-${NodeCrypto.randomUUID()}.tar.gz`;
+          yield* sprites.upload(
+            resource.name,
+            `${ROOT}/${upload}`,
+            yield* saves.read(submission.input.commandId),
+          );
+          yield* exec(`cd ${ROOT}
+trap 'rm -f ${upload}' EXIT
+sudo install -d -o "$(id -u)" -g "$(id -g)" ${WORKSPACE}
+tar -xzf ${upload} -C /
+`);
+        }
         const deployment = yield* encodeJson({
           artifactIntegrity: selectedArtifact.runtime.artifactIntegrity,
           workspaceRoot: WORKSPACE,
@@ -208,6 +255,15 @@ git config --global --add url.https://github.com/.insteadOf ssh://git@github.com
           );
         return;
       }
+      const identity = submission.source.author
+        ? `git config --global user.name ${quote(submission.source.author.name)}
+git config --global user.email ${quote(submission.source.author.email)}`
+        : "";
+      if (stage === "clone" && submission.saved) {
+        // The saved workspace is already back; only the Git identity is not.
+        yield* exec(identity);
+        return;
+      }
       if (stage === "clone") {
         const { source } = submission;
         const upload = `source-${NodeCrypto.randomUUID()}.pack`;
@@ -228,32 +284,12 @@ ${
   git -C ${WORKSPACE} remote add origin ${quote(source.repositoryUrl)}`
     : ""
 }
-${
-  source.author
-    ? `git config --global user.name ${quote(source.author.name)}
-git config --global user.email ${quote(source.author.email)}`
-    : ""
-}
+${identity}
 test "$(git -C ${WORKSPACE} rev-parse HEAD)" = ${quote(source.commit)}
 `);
         return;
       }
-      yield* sprites.putService(resource.name, "t3", {
-        cmd: `${ROOT}/runtime/t3`,
-        args: [
-          "serve",
-          "--host",
-          "0.0.0.0",
-          "--port",
-          "8080",
-          "--no-browser",
-          "--base-dir",
-          `${ROOT}/state`,
-        ],
-        env: { PATH: `${ROOT}/providers/bin:/usr/local/bin:/usr/bin:/bin` },
-        dir: WORKSPACE,
-        http_port: 8080,
-      });
+      yield* sprites.putService(resource.name, "t3", T3_SERVICE);
       const runtime = yield* exec(`${waitForServer}
 ${request("/api/sandbox/runtime")}`).pipe(
         Effect.flatMap(decodeRuntime),
@@ -266,6 +302,23 @@ ${request("/api/sandbox/runtime")}`).pipe(
   );
   const intake: SandboxProvisioner["intake"] = Effect.fnUntraced(function* (submission, secrets) {
     const resource = yield* resources.get(submission.input.commandId);
+    if (submission.saved) {
+      if (!resource.destination || !submission.restoreThreadId)
+        return yield* failure("Saved sandbox has no thread to restore.");
+      const sprites = yield* client(secrets.credential);
+      yield* sprites.exec(
+        resource.name,
+        `set -eu
+exec 9>${ROOT}/setup.lock
+flock 9
+${request("/api/sandbox/unarchive", "POST")}`,
+        yield* encodeJson({ threadId: submission.restoreThreadId }).pipe(
+          Effect.mapError(() => failure("Invalid thread to restore.")),
+        ),
+      );
+      yield* saves.remove(submission.input.commandId);
+      return resource.destination;
+    }
     const body = yield* encodeIntake({
       submission,
       providerInstances: withInstalledClaude(secrets.providerInstances),
@@ -301,11 +354,58 @@ ${request("/api/sandbox/intake", "POST")}`,
     if (existing && resource.sprite && existing.id !== resource.sprite.id)
       return yield* failure("Sandbox binding has changed.");
     if (existing) yield* sprites.remove(resource.name);
+    yield* saves.remove(submission.input.commandId);
     yield* resources.markDeleted(
       submission.input.commandId,
       DateTime.formatIso(yield* DateTime.now),
     );
   });
+  const save: NonNullable<SandboxProvisioner["save"]> = Effect.fnUntraced(
+    function* (submission, credential) {
+      const resource = yield* resources.get(submission.input.commandId);
+      if (resource.deletedAt || !resource.sprite) return yield* failure("Sandbox is not running.");
+      const sprites = yield* client(credential);
+      const archived = yield* sprites
+        .exec(
+          resource.name,
+          `set -eu
+exec 9>${ROOT}/setup.lock
+flock 9
+${waitForServer}
+${request("/api/sandbox/save")}`,
+          "",
+        )
+        .pipe(
+          Effect.flatMap(decodeArchived),
+          Effect.mapError(() => failure("Only a sandbox whose threads are all archived is saved.")),
+        );
+      // Stopped so its database is consistent in the archive.
+      yield* sprites.stopService(resource.name, "t3");
+      const archive = yield* sprites
+        .exec(
+          resource.name,
+          `set -eu
+# Only ignored dependency folders are left out: a tracked one is part of the work.
+git -C ${WORKSPACE} ls-files -z --others --ignored --exclude-standard --directory |
+  tr '\\0' '\\n' | { grep -E '(^|/)node_modules/$' || true; } |
+  sed -e 's#^#${WORKSPACE.slice(1)}/#' -e 's#/$##' > ${ROOT}/save-exclude
+cd /
+tar -czf ${ROOT}/save.tar.gz --exclude-from=${ROOT}/save-exclude --exclude=home/sprite/t3/state/userdata/logs ${SAVED_PATHS.join(" ")}
+`,
+          "",
+        )
+        .pipe(Effect.andThen(sprites.download(resource.name, `${ROOT}/save.tar.gz`)), Effect.exit);
+      if (archive._tag === "Failure") {
+        // Nothing is lost: put the sandbox back as it was.
+        yield* sprites.putService(resource.name, "t3", T3_SERVICE).pipe(Effect.ignore);
+        return yield* Effect.failCause(archive.cause);
+      }
+      yield* saves.write(submission.input.commandId, archive.value);
+      yield* sprites.remove(resource.name);
+      yield* resources.releaseSprite(submission.input.commandId);
+      return archived;
+    },
+  );
   const cancel: SandboxProvisioner["cancel"] = removeResource;
   const remove: SandboxProvisioner["delete"] = removeResource;
   const pair: NonNullable<SandboxProvisioner["pair"]> = Effect.fnUntraced(
@@ -338,5 +438,6 @@ ${request("/api/sandbox/intake", "POST")}`,
     cancel,
     delete: remove,
     pair,
+    save,
   } satisfies SandboxProvisioner;
 });

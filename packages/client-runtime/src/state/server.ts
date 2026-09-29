@@ -1216,6 +1216,16 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.sandboxDeleteSubmission,
       onSettled: refreshSandboxSubmissions,
     }),
+    saveSandboxSubmission: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:save-sandbox-submission",
+      tag: WS_METHODS.sandboxSaveSubmission,
+      onSettled: refreshSandboxSubmissions,
+    }),
+    restoreSandboxSubmission: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:restore-sandbox-submission",
+      tag: WS_METHODS.sandboxRestoreSubmission,
+      onSettled: refreshSandboxSubmissions,
+    }),
     saveSandboxConfiguration: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:save-sandbox-configuration",
       tag: WS_METHODS.sandboxSaveConfiguration,

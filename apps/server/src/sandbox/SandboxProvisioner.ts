@@ -18,6 +18,7 @@ import {
 } from "./SandboxArtifact.ts";
 import type { SandboxProvisioner, SandboxSourcePacker } from "./SandboxSubmissions.ts";
 import { packSandboxSource, resolveSandboxSource } from "./SandboxSource.ts";
+import { makeSandboxSaves } from "./SandboxSaves.ts";
 import { makeSpritesClient } from "./SpritesClient.ts";
 import { makeSpritesProvisioner } from "./SpritesProvisioner.ts";
 
@@ -84,10 +85,13 @@ export const makeConfiguredSandboxProvisioner = Effect.fnUntraced(function* () {
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
+  // Saved sandboxes live in the host's T3 home, next to its settings and secrets.
+  const saves = yield* makeSandboxSaves(path.join(path.dirname(config.settingsPath), "sandboxes"));
   const provisioner = yield* makeSpritesProvisioner(
     null,
     resolveSource,
     packSource,
+    saves,
     (credential) =>
       makeSpritesClient(credential).pipe(
         Effect.provideService(HttpClient.HttpClient, http),

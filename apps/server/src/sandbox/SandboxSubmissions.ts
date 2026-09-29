@@ -7,6 +7,8 @@ import {
   SandboxSubmitInput,
   sandboxInstanceHasCredential,
   type CommandId,
+  type OrchestrationShellSnapshot,
+  type ThreadId,
   type SandboxLaunchOptions,
   type SandboxDestinationConnection,
   type SandboxRuntimeCatalog,
@@ -87,6 +89,11 @@ export interface SandboxProvisioner {
     submission: SandboxSubmissionRecord,
     credential: string,
   ) => Effect.Effect<void, SandboxSubmissionError>;
+  /** Saves the sandbox to the host and deletes it, returning its archived threads. */
+  readonly save?: (
+    submission: SandboxSubmissionRecord,
+    credential: string,
+  ) => Effect.Effect<OrchestrationShellSnapshot, SandboxSubmissionError>;
   readonly pair?: (
     submission: SandboxSubmissionRecord,
     secrets: SandboxCapturedSecrets,
@@ -115,6 +122,7 @@ export const toSandboxSubmission = (value: SandboxSubmissionRecord): SandboxSubm
   progress: value.progress,
   destination: value.destination,
   ...(value.resourceName ? { resourceName: value.resourceName } : {}),
+  savedAt: value.saved?.at ?? null,
   intakeStarted: value.intakeStarted,
   cancelRequested: value.cancelRequested,
   deletedAt: value.deletedAt,
@@ -124,11 +132,40 @@ const toUpdate = (value: SandboxSubmissionRecord): SandboxSubmissionUpdate => ({
   commandId: value.input.commandId,
   progress: value.progress,
   destination: value.destination,
+  ...(value.resourceName ? { resourceName: value.resourceName } : {}),
+  savedAt: value.saved?.at ?? null,
   intakeStarted: value.intakeStarted,
   cancelRequested: value.cancelRequested,
   deletedAt: value.deletedAt,
   deletionError: value.deletionError,
 });
+
+/** Adds saved sandboxes' threads to this host's archived snapshot. Each joins the project
+ * it was launched from while that project exists, and carries what restoring it needs. */
+export const withSavedSandboxes = (
+  snapshot: OrchestrationShellSnapshot,
+  saved: ReadonlyArray<{
+    readonly submission: SandboxSubmissionRecord;
+    readonly archived: OrchestrationShellSnapshot;
+  }>,
+): OrchestrationShellSnapshot => {
+  const hostProjects = new Set(snapshot.projects.map((project) => project.id));
+  const projects = [...snapshot.projects];
+  const threads = [...snapshot.threads];
+  for (const { submission, archived } of saved) {
+    const hostProject = hostProjects.has(submission.input.projectId)
+      ? submission.input.projectId
+      : null;
+    if (!hostProject) projects.push(...archived.projects);
+    const savedSandbox = {
+      commandId: submission.input.commandId,
+      name: submission.resourceName ?? submission.input.title,
+    };
+    for (const thread of archived.threads)
+      threads.push({ ...thread, projectId: hostProject ?? thread.projectId, savedSandbox });
+  }
+  return { ...snapshot, projects, threads };
+};
 
 /** One host-scoped service, independent of client connections. SQL owns progress;
  * immutable private snapshots live in ServerSecretStore, never in RPC responses. */
@@ -337,7 +374,8 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
       }
       yield* stageStatus(id, stage, "done");
     }
-    yield* update(id, (current, at) => ({
+    // A finished restore leaves nothing saved: the sandbox is back.
+    yield* update(id, ({ saved: _saved, restoreThreadId: _thread, ...current }, at) => ({
       ...current,
       progress: { ...current.progress, phase: "done", endedAt: at, error: null },
     }));
@@ -705,9 +743,92 @@ export const makeSandboxSubmissions = Effect.fnUntraced(function* (
         ),
       );
   }, Effect.uninterruptible);
+  /** Saves a ready sandbox whose threads are all archived to this host, then deletes it. */
+  const saveToHost = Effect.fnUntraced(function* (id: CommandId) {
+    const worker = workers.get(id) ?? { lock: Semaphore.makeUnsafe(1), pending: 0 };
+    workers.set(id, worker);
+    worker.pending++;
+    const operation = Effect.gen(function* () {
+      const submission = yield* get(id);
+      if (submission.saved) return submission;
+      if (submission.deletedAt || submission.progress.phase !== "done" || !submission.destination)
+        return yield* failure("invalid", "Only a ready sandbox can be saved.");
+      if (!provisioner?.save)
+        return yield* failure("unsupported", "Sandbox saving is unavailable.");
+      const saveResource = provisioner.save;
+      const archived = yield* withResourceCredential(
+        submission,
+        yield* capturedOption(id),
+        (credential) => saveResource(submission, credential),
+      );
+      return yield* update(id, (current, at) => ({ ...current, saved: { at, archived } }));
+    });
+    return yield* worker.lock
+      .withPermits(1)(operation)
+      .pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (--worker.pending === 0) workers.delete(id);
+          }),
+        ),
+      );
+  }, Effect.uninterruptible);
+  /** Brings a saved sandbox back under the same name on the current runtime, then
+   * unarchives the thread the user picked. Retry resumes a failed restore. */
+  const restore = Effect.fnUntraced(function* (id: CommandId, threadId: ThreadId) {
+    if (!provisioner) return yield* failure("unsupported", "This server can't launch sandboxes.");
+    const runtime = provisioner.getRuntime ? yield* provisioner.getRuntime : provisioner.runtime;
+    if (!runtime) return yield* failure("unavailable", "Sandbox runtime is unavailable.");
+    const value = yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* get(id);
+        if (current.deletedAt || !current.saved)
+          return yield* failure("invalid", "This sandbox isn't saved.");
+        if (current.progress.phase === "running") return current;
+        if (!current.saved.archived.threads.some((thread) => thread.id === threadId))
+          return yield* failure("invalid", "This thread isn't in the saved sandbox.");
+        const at = yield* now;
+        return yield* save({
+          ...current,
+          runtime,
+          restoreThreadId: threadId,
+          progress: {
+            ...current.progress,
+            phase: "running",
+            startedAt: at,
+            endedAt: null,
+            error: null,
+            sequence: current.progress.sequence + 1,
+            stages: [...SANDBOX_PROVISION_STAGES, "agent" as const].map((stage) => ({
+              id: stage,
+              status: "pending" as const,
+              startedAt: null,
+              endedAt: null,
+              percent: null,
+              detail: null,
+              tail: [],
+            })),
+          },
+        });
+      }),
+    );
+    yield* start(id);
+    return value;
+  }, Effect.uninterruptible);
+  /** Saved sandboxes' archived threads, served as this host's until one is restored. */
+  const savedArchives = Effect.map(list, (values) =>
+    values.flatMap((value) =>
+      value.saved && value.progress.phase !== "running"
+        ? [{ submission: value, ...value.saved }]
+        : [],
+    ),
+  );
   return {
     launchOptions,
     submit,
+    save: saveToHost,
+    restore,
+    savedArchives,
     list,
     listStream,
     get,

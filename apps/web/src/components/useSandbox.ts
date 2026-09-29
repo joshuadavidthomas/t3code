@@ -8,6 +8,7 @@ import {
   type SandboxSubmission,
   type SandboxSubmissionUpdate,
   type SandboxSubmitInput,
+  type ThreadId,
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -71,6 +72,11 @@ function applySubmission(
     recoverCancelledSandboxDraft(draftId, newThreadId());
     flushComposerDraftStorage();
   }
+}
+
+function failureMessage(result: AtomCommandResult<unknown, unknown>, fallback: string) {
+  const failure = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
+  return failure instanceof Error ? failure.message : fallback;
 }
 
 /** The server's reason when it refused a launch outright, as opposed to a launch it may have accepted. */
@@ -204,6 +210,12 @@ export function useSandboxCleanup() {
     reportFailure: false,
   });
   const forget = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
+  const saveCommand = useAtomCommand(serverEnvironment.saveSandboxSubmission, {
+    reportFailure: false,
+  });
+  const restoreCommand = useAtomCommand(serverEnvironment.restoreSandboxSubmission, {
+    reportFailure: false,
+  });
 
   /** The launch behind a sandbox environment, on whichever connected host made it. */
   const findLaunch = useCallback(
@@ -234,10 +246,10 @@ export function useSandboxCleanup() {
     async (ownerEnvironmentId: EnvironmentId, commandId: CommandId): Promise<string | null> => {
       const removed = await remove({ environmentId: ownerEnvironmentId, input: { commandId } });
       if (removed._tag === "Failure") {
-        const failure = squashAtomCommandFailure(removed);
         // Deletion reports "invalid" only for a launch the host never stored.
+        const failure = squashAtomCommandFailure(removed);
         if (isSubmissionError(failure) && failure.code === "invalid") return null;
-        return failure instanceof Error ? failure.message : "Couldn't delete the sandbox.";
+        return failureMessage(removed, "Couldn't delete the sandbox.");
       }
       if (removed.value.deletionError) return removed.value.deletionError;
       const destination = removed.value.destination?.environmentId;
@@ -254,7 +266,37 @@ export function useSandboxCleanup() {
     [forget, remove],
   );
 
-  return { findLaunch, deleteSandbox };
+  /** Saves a sandbox whose threads are all archived to its host, which then deletes it. */
+  const saveSandbox = useCallback(
+    async ({ ownerEnvironmentId, submission }: SandboxLaunch): Promise<string | null> => {
+      const saved = await saveCommand({
+        environmentId: ownerEnvironmentId,
+        input: { commandId: submission.input.commandId },
+      });
+      return saved._tag === "Success" ? null : failureMessage(saved, "Couldn't save the sandbox.");
+    },
+    [saveCommand],
+  );
+
+  /** Restores a saved sandbox and then the thread; its environment reconnects on its own. */
+  const restoreSandbox = useCallback(
+    async (
+      ownerEnvironmentId: EnvironmentId,
+      commandId: CommandId,
+      threadId: ThreadId,
+    ): Promise<string | null> => {
+      const restored = await restoreCommand({
+        environmentId: ownerEnvironmentId,
+        input: { commandId, threadId },
+      });
+      return restored._tag === "Success"
+        ? null
+        : failureMessage(restored, "Couldn't restore the sandbox.");
+    },
+    [restoreCommand],
+  );
+
+  return { findLaunch, deleteSandbox, saveSandbox, restoreSandbox };
 }
 
 /** Discards a draft. A launch that never reached its thread goes with it, as Cancel does. */

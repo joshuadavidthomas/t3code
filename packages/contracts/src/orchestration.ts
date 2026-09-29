@@ -940,6 +940,13 @@ export const OrchestrationThreadShell = Schema.Struct({
       }),
     ),
   ),
+  /**
+   * Set on an archived thread whose sandbox was saved to this host and deleted.
+   * Unarchiving it restores the sandbox; `commandId` names its launch.
+   */
+  savedSandbox: Schema.optional(
+    Schema.Struct({ commandId: CommandId, name: TrimmedNonEmptyString }),
+  ),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 

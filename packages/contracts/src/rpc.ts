@@ -17,6 +17,7 @@ import {
   SandboxSubmissionListEvent,
   SandboxSubmissionUpdate,
   SandboxSubmissionInput,
+  SandboxRestoreInput,
   SandboxSubmissionError,
   SandboxDestinationConnection,
 } from "./sandboxSubmission.ts";
@@ -403,6 +404,8 @@ export const WS_METHODS = {
   sandboxRetrySubmission: "sandbox.retrySubmission",
   sandboxCancelSubmission: "sandbox.cancelSubmission",
   sandboxDeleteSubmission: "sandbox.deleteSubmission",
+  sandboxSaveSubmission: "sandbox.saveSubmission",
+  sandboxRestoreSubmission: "sandbox.restoreSubmission",
   sandboxSubscribeSubmission: "sandbox.subscribeSubmission",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
@@ -691,6 +694,16 @@ const WsSandboxCancelSubmissionRpc = Rpc.make(WS_METHODS.sandboxCancelSubmission
 });
 const WsSandboxDeleteSubmissionRpc = Rpc.make(WS_METHODS.sandboxDeleteSubmission, {
   payload: SandboxSubmissionInput,
+  success: SandboxSubmission,
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+});
+const WsSandboxSaveSubmissionRpc = Rpc.make(WS_METHODS.sandboxSaveSubmission, {
+  payload: SandboxSubmissionInput,
+  success: SandboxSubmission,
+  error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
+});
+const WsSandboxRestoreSubmissionRpc = Rpc.make(WS_METHODS.sandboxRestoreSubmission, {
+  payload: SandboxRestoreInput,
   success: SandboxSubmission,
   error: Schema.Union([SandboxSubmissionError, EnvironmentAuthorizationError]),
 });
@@ -1539,6 +1552,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSandboxRetrySubmissionRpc,
   WsSandboxCancelSubmissionRpc,
   WsSandboxDeleteSubmissionRpc,
+  WsSandboxSaveSubmissionRpc,
+  WsSandboxRestoreSubmissionRpc,
   WsSandboxSubscribeSubmissionRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
