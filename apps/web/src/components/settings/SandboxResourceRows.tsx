@@ -12,7 +12,7 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { EllipsisIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   SANDBOX_PAIRING_SCOPE_MESSAGE,
@@ -29,7 +29,6 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentSessionState } from "~/state/session";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel } from "../ui/collapsible";
@@ -138,52 +137,75 @@ export function sandboxBadge(
   }
 }
 
-/** Environments that are sandboxes a connected host launched. They're listed under
- * the account that made them rather than with the machines. */
-export function useSandboxEnvironmentIds(): ReadonlySet<EnvironmentId> {
+export interface SandboxListing {
+  /** Environments that are sandboxes a host launched. They're listed under the account
+   * that made them rather than with the machines. */
+  readonly environmentIds: ReadonlySet<EnvironmentId>;
+  /** Whether any connected host has a sandbox account or sandboxes. */
+  readonly hasProvider: boolean;
+}
+
+/**
+ * What the sandbox hosts say about the saved environments. Null until every connected
+ * host has answered: nothing marks a saved environment as a sandbox, so listing before
+ * then shows each sandbox as a machine first.
+ */
+export function useSandboxListing(): SandboxListing | null {
   const { environments } = useEnvironments();
-  const ids = useAtomValue(
+  // Encoded as a string so an unchanged answer doesn't render the page again.
+  const listing = useAtomValue(
     useMemo(
       () =>
-        Atom.make((get) =>
-          environments
-            .flatMap((environment) =>
-              environment.serverConfig?.environment.capabilities.sandboxConfiguration === true
-                ? Option.getOrElse(
-                    AsyncResult.value(
-                      get(
-                        serverEnvironment.sandboxSubmissions({
-                          environmentId: environment.environmentId,
-                          input: {},
-                        }),
-                      ),
-                    ),
-                    () => [],
-                  )
-                : [],
+        Atom.make((get) => {
+          let hasProvider = false;
+          const ids: Array<EnvironmentId> = [];
+          for (const environment of environments) {
+            if (environment.serverConfig?.environment.capabilities.sandboxConfiguration !== true)
+              continue;
+            const connected = environment.connection.phase === "connected";
+            const request = { environmentId: environment.environmentId, input: {} };
+            const submissions = get(serverEnvironment.sandboxSubmissions(request));
+            const configurations = get(serverEnvironment.sandboxConfiguration(request));
+            if (
+              connected &&
+              (AsyncResult.isInitial(submissions) || AsyncResult.isInitial(configurations))
             )
-            .flatMap((submission) =>
-              submission.deletedAt === null && submission.destination
-                ? [submission.destination.environmentId]
-                : [],
+              return null;
+            const sandboxes = Option.getOrElse(AsyncResult.value(submissions), () => []).filter(
+              (submission) => submission.deletedAt === null,
+            );
+            for (const submission of sandboxes)
+              if (submission.destination) ids.push(submission.destination.environmentId);
+            if (
+              connected &&
+              (sandboxes.length > 0 ||
+                AsyncResult.isFailure(configurations) ||
+                Option.getOrElse(AsyncResult.value(configurations), () => []).length > 0)
             )
-            .join(","),
-        ),
+              hasProvider = true;
+          }
+          return `${hasProvider ? "1" : "0"}${ids.join(",")}`;
+        }),
       [environments],
     ),
   );
-  return useMemo(() => new Set(ids ? (ids.split(",") as EnvironmentId[]) : []), [ids]);
+  return useMemo(
+    () =>
+      listing === null
+        ? null
+        : {
+            hasProvider: listing[0] === "1",
+            environmentIds: new Set(
+              listing.length > 1 ? (listing.slice(1).split(",") as EnvironmentId[]) : [],
+            ),
+          },
+    [listing],
+  );
 }
 
 type SandboxAction = "connect" | "retry" | "cancel" | "delete";
 
-function SandboxHostAccounts({
-  environment,
-  onPresenceChange,
-}: {
-  environment: EnvironmentPresentation;
-  onPresenceChange: (environmentId: string, present: boolean) => void;
-}) {
+function SandboxHostAccounts({ environment }: { environment: EnvironmentPresentation }) {
   const submissions = useEnvironmentQuery(
     serverEnvironment.sandboxSubmissions({ environmentId: environment.environmentId, input: {} }),
   );
@@ -192,11 +214,6 @@ function SandboxHostAccounts({
   );
   const sandboxes = (submissions.data ?? []).filter((submission) => submission.deletedAt === null);
   const accounts = configurations.data ?? [];
-  const present = sandboxes.length > 0 || accounts.length > 0 || configurations.error !== null;
-  useEffect(() => {
-    onPresenceChange(environment.environmentId, present);
-    return () => onPresenceChange(environment.environmentId, false);
-  }, [environment.environmentId, present, onPresenceChange]);
   const remoteSession = useEnvironmentSessionState(environment.environmentId);
   const primarySession = usePrimarySessionState();
   const session =
@@ -541,11 +558,7 @@ function SandboxRow({
 }
 
 /** Each sandbox host's accounts, with the sandboxes each one made folded under it. */
-export function SandboxAccounts({
-  onPresenceChange,
-}: {
-  onPresenceChange: (environmentId: string, present: boolean) => void;
-}) {
+export function SandboxAccounts() {
   const { environments } = useEnvironments();
   return environments
     .filter(
@@ -554,10 +567,6 @@ export function SandboxAccounts({
         environment.serverConfig?.environment.capabilities.sandboxConfiguration === true,
     )
     .map((environment) => (
-      <SandboxHostAccounts
-        key={environment.environmentId}
-        environment={environment}
-        onPresenceChange={onPresenceChange}
-      />
+      <SandboxHostAccounts key={environment.environmentId} environment={environment} />
     ));
 }

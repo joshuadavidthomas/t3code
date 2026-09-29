@@ -6,6 +6,8 @@ import {
   type SandboxSubmission,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { RegistryContext } from "@effect/atom-react";
+import { AsyncResult, AtomRegistry } from "effect/unstable/reactivity";
 import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 
@@ -15,13 +17,15 @@ const state = vi.hoisted(() => ({
   accounts: [] as unknown[],
   deleteSandbox: vi.fn(),
   confirm: vi.fn(),
+  kinds: new WeakMap<object, string>(),
+  queries: {} as Record<"list" | "accounts", (environmentId: string) => never>,
 }));
 vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: state.environments }),
 }));
 vi.mock("~/state/query", () => ({
-  useEnvironmentQuery: (atom: string) => ({
-    data: atom === "accounts" ? state.accounts : state.submissions,
+  useEnvironmentQuery: (atom: object) => ({
+    data: state.kinds.get(atom) === "accounts" ? state.accounts : state.submissions,
     error: null,
     isSuccess: true,
     refresh: () => {},
@@ -56,12 +60,24 @@ vi.mock("~/state/session", () => ({
   }),
 }));
 vi.mock("~/environments/primary", () => ({ usePrimarySessionState: () => ({ data: null }) }));
-vi.mock("~/state/server", () => ({
-  serverEnvironment: {
-    sandboxSubmissions: () => "list",
-    sandboxConfiguration: () => "accounts",
-  },
-}));
+vi.mock("~/state/server", async () => {
+  const { AsyncResult, Atom } = await import("effect/unstable/reactivity");
+  const query = (kind: "list" | "accounts") =>
+    Atom.family((_environmentId: string) => {
+      const atom = Atom.make<AsyncResult.AsyncResult<unknown>>(AsyncResult.initial());
+      state.kinds.set(atom, kind);
+      return atom;
+    });
+  state.queries = { list: query("list"), accounts: query("accounts") } as never;
+  return {
+    serverEnvironment: {
+      sandboxSubmissions: ({ environmentId }: { environmentId: string }) =>
+        state.queries.list(environmentId),
+      sandboxConfiguration: ({ environmentId }: { environmentId: string }) =>
+        state.queries.accounts(environmentId),
+    },
+  };
+});
 vi.mock("../useSandbox", () => ({
   SANDBOX_PAIRING_SCOPE_MESSAGE: "",
   useConnectSandboxDestination: () => vi.fn(),
@@ -86,6 +102,7 @@ import {
   sandboxBadge,
   sandboxResourceStatus,
   sortSandboxEntries,
+  useSandboxListing,
 } from "./SandboxResourceRows";
 
 const environment = {
@@ -165,7 +182,7 @@ describe("sandbox resource actions", () => {
     state.deleteSandbox.mockResolvedValueOnce("Provider unavailable").mockResolvedValueOnce(null);
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<SandboxAccounts onPresenceChange={() => {}} />);
+      renderer = create(<SandboxAccounts />);
     });
     try {
       expect(
@@ -245,7 +262,7 @@ describe("sandbox resource actions", () => {
     ];
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<SandboxAccounts onPresenceChange={() => {}} />);
+      renderer = create(<SandboxAccounts />);
     });
     const text = (node: ReactTestRenderer["root"]): string =>
       node.children.map((child) => (typeof child === "string" ? child : text(child))).join("");
@@ -289,5 +306,45 @@ describe("sandbox resource actions", () => {
       "unknown",
       "archived",
     ]);
+  });
+
+  it("lists nothing until every connected host says which environments are sandboxes", async () => {
+    const host = (id: string, phase: string) => ({
+      environmentId: EnvironmentId.make(id),
+      connection: { phase },
+      serverConfig: { environment: { capabilities: { sandboxConfiguration: true } } },
+    });
+    // A host that isn't connected can't answer, so it doesn't hold the page.
+    state.environments = [host("owner", "connected"), host("offline", "connecting")];
+    const registry = AtomRegistry.make();
+    let listing: ReturnType<typeof useSandboxListing> = null;
+    function Probe() {
+      listing = useSandboxListing();
+      return null;
+    }
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(
+        <RegistryContext.Provider value={registry}>
+          <Probe />
+        </RegistryContext.Provider>,
+      );
+    });
+    expect(listing).toBeNull();
+    await act(async () => {
+      registry.set(
+        state.queries.list("owner"),
+        AsyncResult.success([
+          { deletedAt: null, destination: { environmentId: "sandbox" } },
+          { deletedAt: "2026-09-29T00:00:00Z", destination: { environmentId: "deleted" } },
+        ]) as never,
+      );
+    });
+    expect(listing).toBeNull();
+    await act(async () => {
+      registry.set(state.queries.accounts("owner"), AsyncResult.success([]) as never);
+    });
+    expect(listing).toEqual({ hasProvider: true, environmentIds: new Set(["sandbox"]) });
+    await act(async () => renderer.unmount());
   });
 });

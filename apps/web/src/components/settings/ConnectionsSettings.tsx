@@ -81,7 +81,7 @@ import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { SandboxConfigurationForm, useSandboxConfiguration } from "./SandboxSettings";
-import { SandboxAccounts, useSandboxEnvironmentIds } from "./SandboxResourceRows";
+import { SandboxAccounts, useSandboxListing } from "./SandboxResourceRows";
 import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
 import { CommandShortcut } from "../ui/command";
@@ -1813,16 +1813,18 @@ export function ConnectionsSettings() {
   );
   // The WSL backend is managed from the WSL row under this machine, so it has
   // no row of its own in the list.
-  // Sandboxes are listed under the account that made them.
-  const sandboxEnvironmentIds = useSandboxEnvironmentIds();
+  // Sandboxes are listed under the account that made them, so nothing is listed
+  // until the hosts say which environments those are.
+  const sandboxListing = useSandboxListing();
   const listedEnvironments = useMemo(
     () =>
       savedEnvironments.filter(
         (environment) =>
           !isDesktopLocalConnectionTarget(environment.entry.target) &&
-          !sandboxEnvironmentIds.has(environment.environmentId),
+          sandboxListing !== null &&
+          !sandboxListing.environmentIds.has(environment.environmentId),
       ),
-    [sandboxEnvironmentIds, savedEnvironments],
+    [sandboxListing, savedEnvironments],
   );
   // Machines "Update all" can reach: switched on, connected, behind the client
   // version, remotely updatable, and not already mid-update. The button only
@@ -1975,12 +1977,6 @@ export function ConnectionsSettings() {
   const sandboxAvailable =
     primaryServerConfig?.environment.capabilities.sandboxConfiguration === true;
   const sandboxHost = useSandboxConfiguration(primaryEnvironmentId, sandboxAvailable);
-  const [sandboxResources, setSandboxResources] = useState<Record<string, boolean>>({});
-  const handleSandboxResourcesChange = useCallback((environmentId: string, present: boolean) => {
-    setSandboxResources((current) =>
-      current[environmentId] === present ? current : { ...current, [environmentId]: present },
-    );
-  }, []);
   const savedBackendMode =
     selectedBackendMode === "sandbox" && !sandboxAvailable ? "remote" : selectedBackendMode;
   const primaryVersionMismatch = resolveServerConfigVersionMismatch(primaryServerConfig);
@@ -3774,12 +3770,14 @@ export function ConnectionsSettings() {
             onRemove={handleRemoveSavedBackend}
           />
         ))}
-        <SandboxAccounts onPresenceChange={handleSandboxResourcesChange} />
-        <CloudRemoteEnvironmentRows
-          primaryEnvironmentId={primaryEnvironmentId}
-          savedEnvironments={savedEnvironments}
-          hasSandboxProvider={Object.values(sandboxResources).some(Boolean)}
-        />
+        {sandboxListing && <SandboxAccounts />}
+        {sandboxListing && (
+          <CloudRemoteEnvironmentRows
+            primaryEnvironmentId={primaryEnvironmentId}
+            savedEnvironments={savedEnvironments}
+            hasSandboxProvider={sandboxListing.hasProvider}
+          />
+        )}
       </SettingsSection>
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
