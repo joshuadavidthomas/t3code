@@ -22,7 +22,7 @@ import {
 import { requestConfirmDialog } from "~/confirmDialog";
 import { environmentCatalog } from "~/connection/catalog";
 import { isElectron } from "~/env";
-import { usePrimarySessionState } from "~/environments/primary";
+import { readPrimaryEnvironmentTarget, usePrimarySessionState } from "~/environments/primary";
 import { useEnvironments, type EnvironmentPresentation } from "~/state/environments";
 import { useThreadShells } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
@@ -151,23 +151,45 @@ export interface SandboxListing {
  * then shows each sandbox as a machine first.
  */
 export function useSandboxListing(): SandboxListing | null {
-  const { environments } = useEnvironments();
+  const { environments, isReady } = useEnvironments();
+  const [hasPrimary] = useState(() => readPrimaryEnvironmentTarget() !== null);
   // Encoded as a string so an unchanged answer doesn't render the page again.
   const listing = useAtomValue(
     useMemo(
       () =>
         Atom.make((get) => {
+          // Saved environments load before this machine is found, and this machine is
+          // the usual sandbox host.
+          if (
+            !isReady ||
+            (hasPrimary &&
+              !environments.some(
+                (environment) => environment.entry.target._tag === "PrimaryConnectionTarget",
+              ))
+          )
+            return null;
           let hasProvider = false;
           const ids: Array<EnvironmentId> = [];
           for (const environment of environments) {
-            if (environment.serverConfig?.environment.capabilities.sandboxConfiguration !== true)
-              continue;
             const connected = environment.connection.phase === "connected";
+            // Worth waiting for: a connected host, and this machine while it connects.
+            const answering =
+              connected ||
+              (environment.entry.target._tag === "PrimaryConnectionTarget" &&
+                (environment.connection.phase === "available" ||
+                  environment.connection.phase === "connecting"));
+            // Until a host's config arrives, it may be a sandbox host.
+            if (!environment.serverConfig) {
+              if (answering) return null;
+              continue;
+            }
+            if (environment.serverConfig.environment.capabilities.sandboxConfiguration !== true)
+              continue;
             const request = { environmentId: environment.environmentId, input: {} };
             const submissions = get(serverEnvironment.sandboxSubmissions(request));
             const configurations = get(serverEnvironment.sandboxConfiguration(request));
             if (
-              connected &&
+              answering &&
               (AsyncResult.isInitial(submissions) || AsyncResult.isInitial(configurations))
             )
               return null;
@@ -186,20 +208,24 @@ export function useSandboxListing(): SandboxListing | null {
           }
           return `${hasProvider ? "1" : "0"}${ids.join(",")}`;
         }),
-      [environments],
+      [environments, hasPrimary, isReady],
     ),
   );
+  // Once listed, the page stays listed while a host reconnects or joins later.
+  const [settled, setSettled] = useState(listing);
+  if (listing !== null && listing !== settled) setSettled(listing);
+  const shown = listing ?? settled;
   return useMemo(
     () =>
-      listing === null
+      shown === null
         ? null
         : {
-            hasProvider: listing[0] === "1",
+            hasProvider: shown[0] === "1",
             environmentIds: new Set(
-              listing.length > 1 ? (listing.slice(1).split(",") as EnvironmentId[]) : [],
+              shown.length > 1 ? (shown.slice(1).split(",") as EnvironmentId[]) : [],
             ),
           },
-    [listing],
+    [shown],
   );
 }
 

@@ -21,7 +21,7 @@ const state = vi.hoisted(() => ({
   queries: {} as Record<"list" | "accounts", (environmentId: string) => never>,
 }));
 vi.mock("~/state/environments", () => ({
-  useEnvironments: () => ({ environments: state.environments }),
+  useEnvironments: () => ({ environments: state.environments, isReady: true }),
 }));
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (atom: object) => ({
@@ -59,7 +59,10 @@ vi.mock("~/state/session", () => ({
     data: { authenticated: true, scopes: ["orchestration:operate"] },
   }),
 }));
-vi.mock("~/environments/primary", () => ({ usePrimarySessionState: () => ({ data: null }) }));
+vi.mock("~/environments/primary", () => ({
+  readPrimaryEnvironmentTarget: () => ({}),
+  usePrimarySessionState: () => ({ data: null }),
+}));
 vi.mock("~/state/server", async () => {
   const { AsyncResult, Atom } = await import("effect/unstable/reactivity");
   const query = (kind: "list" | "accounts") =>
@@ -309,27 +312,44 @@ describe("sandbox resource actions", () => {
   });
 
   it("lists nothing until every connected host says which environments are sandboxes", async () => {
-    const host = (id: string, phase: string) => ({
+    const host = (id: string, phase: string, config = true) => ({
       environmentId: EnvironmentId.make(id),
+      entry: {
+        target: { _tag: id === "owner" ? "PrimaryConnectionTarget" : "BearerConnectionTarget" },
+      },
       connection: { phase },
-      serverConfig: { environment: { capabilities: { sandboxConfiguration: true } } },
+      serverConfig: config
+        ? { environment: { capabilities: { sandboxConfiguration: true } } }
+        : null,
     });
-    // A host that isn't connected can't answer, so it doesn't hold the page.
-    state.environments = [host("owner", "connected"), host("offline", "connecting")];
     const registry = AtomRegistry.make();
     let listing: ReturnType<typeof useSandboxListing> = null;
     function Probe() {
       listing = useSandboxListing();
       return null;
     }
+    const render = () => (
+      <RegistryContext.Provider value={registry}>
+        <Probe />
+      </RegistryContext.Provider>
+    );
+    // Saved environments load before this machine is found.
+    state.environments = [host("offline", "connecting")];
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(
-        <RegistryContext.Provider value={registry}>
-          <Probe />
-        </RegistryContext.Provider>,
-      );
+      renderer = create(render());
     });
+    expect(listing).toBeNull();
+    // This machine may be a sandbox host until its config arrives, and then is one
+    // that hasn't answered while it connects.
+    for (const found of [host("owner", "connecting", false), host("owner", "connecting")]) {
+      state.environments = [found, host("offline", "connecting")];
+      await act(async () => renderer.update(render()));
+      expect(listing).toBeNull();
+    }
+    // A host that isn't connected can't answer, so it doesn't hold the page.
+    state.environments = [host("owner", "connected"), host("offline", "connecting")];
+    await act(async () => renderer.update(render()));
     expect(listing).toBeNull();
     await act(async () => {
       registry.set(
@@ -344,7 +364,12 @@ describe("sandbox resource actions", () => {
     await act(async () => {
       registry.set(state.queries.accounts("owner"), AsyncResult.success([]) as never);
     });
-    expect(listing).toEqual({ hasProvider: true, environmentIds: new Set(["sandbox"]) });
+    const answered = { hasProvider: true, environmentIds: new Set(["sandbox"]) };
+    expect(listing).toEqual(answered);
+    // A host connecting later doesn't take the listed page away.
+    state.environments = [host("owner", "connected"), host("offline", "connected", false)];
+    await act(async () => renderer.update(render()));
+    expect(listing).toEqual(answered);
     await act(async () => renderer.unmount());
   });
 });
