@@ -12,6 +12,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 const state = vi.hoisted(() => ({
   environments: [] as unknown[],
   submissions: [] as unknown[],
+  accounts: [] as unknown[],
   deleteSandbox: vi.fn(),
   confirm: vi.fn(),
 }));
@@ -19,7 +20,31 @@ vi.mock("~/state/environments", () => ({
   useEnvironments: () => ({ environments: state.environments }),
 }));
 vi.mock("~/state/query", () => ({
-  useEnvironmentQuery: () => ({ data: state.submissions, refresh: () => {} }),
+  useEnvironmentQuery: (atom: string) => ({
+    data: atom === "accounts" ? state.accounts : state.submissions,
+    error: null,
+    isSuccess: true,
+    refresh: () => {},
+  }),
+}));
+vi.mock("~/state/entities", () => ({ useThreadShells: () => [] }));
+vi.mock("~/connection/catalog", () => ({ environmentCatalog: { setEnabled: "enable" } }));
+vi.mock("./SandboxSettings", () => ({
+  SandboxRegistrationRow: ({ configuration }: { configuration: { name: string } }) => (
+    <p>{configuration.name}</p>
+  ),
+  EditSandboxConfigurationDialog: () => null,
+}));
+vi.mock("../ui/collapsible", () => ({
+  Collapsible: ({ children }: { children: ReactNode }) => children,
+  CollapsibleTrigger: ({ children }: { children: ReactNode }) => <p>{children}</p>,
+  CollapsiblePanel: ({ children }: { children: ReactNode }) => children,
+}));
+vi.mock("./settingsLayout", () => ({ SettingsRow: () => null }));
+vi.mock("../ui/tooltip", () => ({
+  Tooltip: () => null,
+  TooltipTrigger: () => null,
+  TooltipPopup: () => null,
 }));
 vi.mock("~/state/session", () => ({
   useEnvironmentSessionState: () => ({
@@ -29,8 +54,8 @@ vi.mock("~/state/session", () => ({
 vi.mock("~/environments/primary", () => ({ usePrimarySessionState: () => ({ data: null }) }));
 vi.mock("~/state/server", () => ({
   serverEnvironment: {
-    sandboxSubmissions: () => null,
-    sandboxConfiguration: () => null,
+    sandboxSubmissions: () => "list",
+    sandboxConfiguration: () => "accounts",
   },
 }));
 vi.mock("../useSandbox", () => ({
@@ -51,9 +76,10 @@ vi.mock("../ui/menu", () => ({
 }));
 
 import {
-  SandboxResourceRows,
+  SandboxAccounts,
   canOperateSandboxResources,
   canPairSandboxDestinations,
+  sandboxBadge,
   sandboxResourceStatus,
 } from "./SandboxResourceRows";
 
@@ -124,13 +150,17 @@ describe("sandbox resource actions", () => {
         connection: { phase: "connected" },
         serverConfig: { environment: { capabilities: { sandboxConfiguration: true } } },
       },
-      { environmentId: destinationId, connection: { phase: "disconnected" } },
+      {
+        environmentId: destinationId,
+        entry: { enabled: true },
+        connection: { phase: "available" },
+      },
     ];
     state.confirm.mockResolvedValueOnce(false).mockResolvedValue(true);
     state.deleteSandbox.mockResolvedValueOnce("Provider unavailable").mockResolvedValueOnce(null);
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(<SandboxResourceRows onResourcesChange={() => {}} />);
+      renderer = create(<SandboxAccounts onPresenceChange={() => {}} />);
     });
     try {
       expect(
@@ -159,5 +189,75 @@ describe("sandbox resource actions", () => {
         renderer.unmount();
       });
     }
+  });
+
+  it("reads a running sandbox's state from its threads, as the sidebar shows them", () => {
+    const done = {
+      progress: { phase: "done" },
+      destination: {},
+      cancelRequested: false,
+    } as SandboxSubmission;
+    expect(sandboxBadge(done, null)).toBeNull();
+    expect(sandboxBadge(done, [])).toBeNull();
+    expect(
+      sandboxBadge(done, [{ settledOverride: "settled" }, { settledOverride: null }])?.label,
+    ).toBe("Active");
+    expect(sandboxBadge(done, [{ settledOverride: "settled" }])?.label).toBe("Settled");
+    expect(sandboxBadge({ ...done, savedAt: "2026-09-29T00:00:00.000Z" }, null)?.label).toBe(
+      "Archived",
+    );
+    expect(
+      sandboxBadge({ ...done, progress: { phase: "running" } } as SandboxSubmission, null)?.label,
+    ).toBe("Setting up");
+  });
+
+  it("lists each sandbox under the account that made it, and keeps a removed account's", async () => {
+    const sandbox = (id: string, configurationId: string) => ({
+      input: { commandId: id, title: id, configurationId },
+      progress: { phase: "failed", error: null },
+      intakeStarted: true,
+      destination: null,
+      deletedAt: null,
+      deletionError: null,
+    });
+    state.accounts = [
+      { id: "personal", name: "Personal" },
+      { id: "work", name: "Work" },
+    ];
+    state.submissions = [
+      sandbox("one", "personal"),
+      sandbox("two", "work"),
+      sandbox("three", "personal"),
+      sandbox("four", "gone"),
+    ];
+    state.environments = [
+      {
+        environmentId: EnvironmentId.make("owner"),
+        entry: { target: { _tag: "BearerConnectionTarget" } },
+        connection: { phase: "connected" },
+        serverConfig: { environment: { capabilities: { sandboxConfiguration: true } } },
+      },
+    ];
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<SandboxAccounts onPresenceChange={() => {}} />);
+    });
+    const text = (node: ReactTestRenderer["root"]): string =>
+      node.children.map((child) => (typeof child === "string" ? child : text(child))).join("");
+    const lines = renderer.root
+      .findAll((node) => node.type === "p" && node.parent?.type !== "p")
+      .map(text);
+    expect(lines).toEqual([
+      "Personal",
+      "2 sandboxes · 2 failed",
+      "oneFailed",
+      "threeFailed",
+      "Work",
+      "1 sandbox · 1 failed",
+      "twoFailed",
+      "From removed accounts1 sandbox · 1 failed",
+      "fourFailed",
+    ]);
+    await act(async () => renderer.unmount());
   });
 });

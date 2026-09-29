@@ -44,9 +44,10 @@ Deleting the last thread in a sandbox offers to delete the sandbox too; with
 **Delete worktrees with deleted threads** on, it's deleted without asking once
 all its work is pushed. Discarding a failed launch deletes its sandbox.
 
-Manage sandboxes under **Settings → Connections**. **Connect** opens a sandbox
-a device couldn't connect to on its own; **Delete sandbox** removes it along
-with its threads, from every device. Removing an account or disconnecting an
+**Settings → Connections** lists each account's sandboxes under it, with
+whether each is active, settled, or still setting up. **Connect** opens a
+sandbox a device couldn't connect to on its own; **Delete sandbox** removes it
+along with its threads, from every device. Removing an account or disconnecting an
 environment does not delete its sandboxes.
 
 ## T3 Connect

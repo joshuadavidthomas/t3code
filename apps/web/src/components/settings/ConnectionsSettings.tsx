@@ -75,17 +75,13 @@ import {
   environmentTransportLabel,
   formatAccessTimestamp,
   formatDesktopSshTarget,
+  savedBackendStatus,
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
-import {
-  EditSandboxConfigurationDialog,
-  SandboxConfigurationForm,
-  SandboxRegistrationRow,
-  useSandboxConfiguration,
-} from "./SandboxSettings";
-import { SandboxResourceRows } from "./SandboxResourceRows";
+import { SandboxConfigurationForm, useSandboxConfiguration } from "./SandboxSettings";
+import { SandboxAccounts, useSandboxEnvironmentIds } from "./SandboxResourceRows";
 import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
 import { CommandShortcut } from "../ui/command";
@@ -1430,43 +1426,6 @@ type SavedBackendListRowProps = {
 };
 
 /**
- * Status word for a row subtitle: "Reconnecting: <reason>" instead of the
- * long-form sentence, since the row has one line and the full text is one
- * hover away.
- */
-function savedBackendStatus(environment: EnvironmentPresentation): {
-  readonly text: string;
-  readonly tone: "muted" | "error";
-} {
-  if (!environment.entry.enabled && environment.connection.phase !== "unsupported")
-    return { text: "Off", tone: "muted" };
-  const { connection } = environment;
-  switch (connection.phase) {
-    case "connected":
-      return { text: "Connected", tone: "muted" };
-    case "connecting":
-      return { text: "Connecting", tone: "muted" };
-    case "reconnecting":
-      return {
-        text: connection.error ? `Reconnecting: ${connection.error}` : "Reconnecting",
-        tone: "error",
-      };
-    // Not a failure: the machine is fine, this build just cannot talk to it.
-    case "unsupported":
-      return { text: "Client not supported", tone: "muted" };
-    case "error":
-      return {
-        text: connection.error ? `Connection failed: ${connection.error}` : "Connection failed",
-        tone: "error",
-      };
-    case "offline":
-      return { text: "Offline", tone: "muted" };
-    case "available":
-      return { text: "Not connected", tone: "muted" };
-  }
-}
-
-/**
  * One added machine in the Environments list. The switch is the main action;
  * the update icon appears only when that machine can take an update; the
  * row menu holds the icon override, trace ID, and removal.
@@ -1854,12 +1813,16 @@ export function ConnectionsSettings() {
   );
   // The WSL backend is managed from the WSL row under this machine, so it has
   // no row of its own in the list.
+  // Sandboxes are listed under the account that made them.
+  const sandboxEnvironmentIds = useSandboxEnvironmentIds();
   const listedEnvironments = useMemo(
     () =>
       savedEnvironments.filter(
-        (environment) => !isDesktopLocalConnectionTarget(environment.entry.target),
+        (environment) =>
+          !isDesktopLocalConnectionTarget(environment.entry.target) &&
+          !sandboxEnvironmentIds.has(environment.environmentId),
       ),
-    [savedEnvironments],
+    [sandboxEnvironmentIds, savedEnvironments],
   );
   // Machines "Update all" can reach: switched on, connected, behind the client
   // version, remotely updatable, and not already mid-update. The button only
@@ -1957,9 +1920,6 @@ export function ConnectionsSettings() {
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
-  const [selectedSandboxConfigurationId, setSelectedSandboxConfigurationId] = useState<
-    string | null
-  >(null);
   const [selectedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh" | "sandbox">(
     "remote",
   );
@@ -2021,10 +1981,6 @@ export function ConnectionsSettings() {
       current[environmentId] === present ? current : { ...current, [environmentId]: present },
     );
   }, []);
-  const selectedSandboxConfiguration =
-    sandboxHost.configurations.find(
-      (configuration) => configuration.id === selectedSandboxConfigurationId,
-    ) ?? null;
   const savedBackendMode =
     selectedBackendMode === "sandbox" && !sandboxAvailable ? "remote" : selectedBackendMode;
   const primaryVersionMismatch = resolveServerConfigVersionMismatch(primaryServerConfig);
@@ -3818,53 +3774,12 @@ export function ConnectionsSettings() {
             onRemove={handleRemoveSavedBackend}
           />
         ))}
-        <SandboxResourceRows onResourcesChange={handleSandboxResourcesChange} />
+        <SandboxAccounts onPresenceChange={handleSandboxResourcesChange} />
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
-          hasSandboxProvider={
-            (sandboxAvailable && sandboxHost.configurations.length > 0) ||
-            Object.values(sandboxResources).some(Boolean)
-          }
+          hasSandboxProvider={Object.values(sandboxResources).some(Boolean)}
         />
-        {sandboxAvailable && (sandboxHost.configurations.length > 0 || sandboxHost.error) ? (
-          <>
-            {sandboxHost.error ? (
-              <SettingsRow
-                title="Sandbox accounts"
-                description="Couldn't load sandbox accounts."
-                status={<span className="block text-destructive">{sandboxHost.error}</span>}
-                control={
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={sandboxHost.reload}
-                    disabled={sandboxHost.refreshing}
-                  >
-                    {sandboxHost.refreshing ? "Retrying…" : "Retry"}
-                  </Button>
-                }
-              />
-            ) : null}
-            {primaryEnvironmentId ? (
-              <>
-                {sandboxHost.configurations.map((configuration) => (
-                  <SandboxRegistrationRow
-                    key={configuration.id}
-                    environmentId={primaryEnvironmentId}
-                    configuration={configuration}
-                    onEdit={() => setSelectedSandboxConfigurationId(configuration.id)}
-                  />
-                ))}
-                <EditSandboxConfigurationDialog
-                  environmentId={primaryEnvironmentId}
-                  configuration={selectedSandboxConfiguration}
-                  onClose={() => setSelectedSandboxConfigurationId(null)}
-                />
-              </>
-            ) : null}
-          </>
-        ) : null}
       </SettingsSection>
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
