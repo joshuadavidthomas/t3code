@@ -259,7 +259,13 @@ export const makeSpritesClient = Effect.fn("SpritesClient.make")(function* (cred
         HttpClientRequest.bodyJsonUnsafe(service),
       ),
     ).pipe(
-      Effect.flatMap(boundedText),
+      // Sprites can leave this stream open after the service has started. The service is
+      // registered either way, and callers confirm the server answers themselves.
+      Effect.flatMap((response) =>
+        boundedText(response).pipe(
+          Effect.timeoutOrElse({ duration: "1 minute", orElse: () => Effect.succeed("") }),
+        ),
+      ),
       Effect.flatMap((text) =>
         Effect.forEach(text.split("\n"), (line) => {
           if (line.trim() === "") return Effect.void;

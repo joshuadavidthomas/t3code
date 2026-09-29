@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Queue from "effect/Queue";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
@@ -189,6 +190,19 @@ describe("SpritesClient", () => {
       yield* withClient([new Response(`${body}\n`, { status: 200 })], (client) =>
         client.putService("sprite", "t3", { cmd: "node", args: ["server.js"] }),
       );
+    }),
+  );
+
+  it.effect("registers a service whose event stream Sprites leaves open", () =>
+    Effect.gen(function* () {
+      const open = new ReadableStream<Uint8Array>({
+        start: (controller) => controller.enqueue(new TextEncoder().encode('{"type":"started"}\n')),
+      });
+      const fiber = yield* withClient([new Response(open, { status: 200 })], (client) =>
+        client.putService("sprite", "t3", { cmd: "node", args: ["server.js"] }),
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      expect(Exit.isSuccess(yield* Fiber.await(fiber))).toBe(true);
     }),
   );
 });
