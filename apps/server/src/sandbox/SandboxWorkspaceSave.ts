@@ -1,12 +1,24 @@
 // Shell scripts that save a sandbox's workspace and put it back. A save holds only what
-// the host can't recreate: the seed commit comes from the host's repo on restore, so the
-// save is the work since then. Paths are quoted by the caller's `quote`.
+// can't be recreated: the seed commit comes back from the host's repo, and what the
+// project's setup script made comes back by running it again. Everything else is kept,
+// ignored files included. `setupMade` lists, as \`git ls-files --others --ignored
+// --directory -z\` does, the ignored paths present right after setup; without it every
+// ignored file is kept. Paths are quoted by the caller's `quote`.
+
+// Anchored patterns for the paths setup made; an empty list skips nothing.
+const setupMadePatterns = (setupMade: string, out: string) =>
+  `if [ -f ${setupMade} ]; then
+  tr '\\0' '\\n' < ${setupMade} | sed -e 's/[][\\.*^$+?(){}|]/\\\\&/g' -e 's/^/^/' > ${out}/setup-made
+else
+  : > ${out}/setup-made
+fi`;
 
 /** Writes `out` with the commits, refs and uncommitted work made on top of `seed`. */
 export const saveWorkspaceScript = (input: {
   readonly workspace: string;
   readonly out: string;
   readonly seed: string;
+  readonly setupMade: string;
 }) => `set -eu
 rm -rf ${input.out}
 mkdir -p ${input.out}
@@ -19,16 +31,19 @@ if index_tree=$(git write-tree 2>/dev/null); then
   skip_index=--exclude=./index
 fi
 # Commits, stashes and staged files made here, minus everything the seed already has.
-git rev-list --objects --all --reflog --indexed-objects HEAD $index_tree --not ${input.seed} |
+# The seed's tree is excluded too: T3's checkpoints are commits without parents.
+git rev-list --objects --all --reflog --indexed-objects HEAD $index_tree \\
+  --not ${input.seed} ${input.seed}^{tree} |
   git pack-objects -q ${input.out}/work >/dev/null
 # Refs and config; objects come from the seed and the pack above.
 tar -czf ${input.out}/git.tar.gz -C .git --exclude=./objects $skip_index .
-# Uncommitted work: changed and untracked files, and ignored files outside node_modules,
-# which worktree cleanup treats as precious too.
+# Uncommitted work: changed, untracked and ignored files, except what setup made.
+${setupMadePatterns(input.setupMade, input.out)}
 git ls-files -z --deleted > ${input.out}/deleted
 {
   git ls-files -z --modified --others --exclude-standard
-  git ls-files -z --others --ignored --exclude-standard | { grep -zvE '(^|/)node_modules/' || true; }
+  git ls-files -z --others --ignored --exclude-standard |
+    { grep -zvE -f ${input.out}/setup-made || true; }
 } > ${input.out}/changed
 tar -czf ${input.out}/changes.tar.gz --null --ignore-failed-read -T ${input.out}/changed 2>/dev/null
 `;
@@ -51,13 +66,16 @@ tar -xzf ${input.from}/changes.tar.gz
 export const saveWholeWorkspaceScript = (input: {
   readonly workspace: string;
   readonly out: string;
+  readonly setupMade: string;
 }) => `set -eu
 rm -rf ${input.out}
 mkdir -p ${input.out}
 cd ${input.workspace}
-git ls-files -z --others --ignored --exclude-standard --directory |
-  tr '\\0' '\\n' | { grep -E '(^|/)node_modules/$' || true; } | sed -e 's#/$##' -e 's#^#./#' > ${input.out}/skipped
-# Anchored, so a tracked folder that happens to be named node_modules is kept.
+if [ -f ${input.setupMade} ]; then
+  tr '\\0' '\\n' < ${input.setupMade} | sed -e 's#/$##' -e 's#^#./#' > ${input.out}/skipped
+else
+  : > ${input.out}/skipped
+fi
 tar -czf ${input.out}/workspace.tar.gz --anchored --exclude-from=${input.out}/skipped .
 `;
 

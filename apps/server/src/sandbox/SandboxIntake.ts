@@ -3,6 +3,8 @@ import {
   type EnvironmentId,
   type OrchestrationCommand,
   type ProjectId,
+  type ProjectScript,
+  type ThreadId,
   type ProviderInstanceConfigMap,
   type ProviderInstanceId,
   type SandboxDestination,
@@ -62,6 +64,12 @@ export interface SandboxIntakeDependencies {
     selectedInstanceId: ProviderInstanceId,
   ) => Effect.Effect<void, SandboxSubmissionError>;
   readonly dispatch: OrchestrationEngineShape["dispatch"];
+  /** Runs the project's setup script before the first turn, as a new worktree does. */
+  readonly prepareWorkspace: (input: {
+    readonly threadId: ThreadId;
+    readonly projectId: ProjectId;
+    readonly scripts: ReadonlyArray<ProjectScript>;
+  }) => Effect.Effect<void>;
 }
 
 export interface SandboxIntakeInput {
@@ -213,6 +221,12 @@ export const makeSandboxIntake = Effect.fnUntraced(function* (deps: SandboxIntak
       },
     ];
     for (const command of commands) {
+      if (command.type === "thread.turn.start")
+        yield* deps.prepareWorkspace({
+          threadId: submission.input.threadId,
+          projectId: input.projectId,
+          scripts: submission.source.projectScripts ?? [],
+        });
       yield* deps
         .dispatch(command)
         .pipe(

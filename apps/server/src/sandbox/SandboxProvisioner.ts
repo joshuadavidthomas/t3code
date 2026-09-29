@@ -11,6 +11,8 @@ import * as Socket from "effect/unstable/socket/Socket";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { GitHubCli } from "../sourceControl/GitHubCli.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { ServerConfig } from "../config.ts";
 import {
   resolveCurrentSandboxArtifact,
@@ -31,6 +33,7 @@ export const makeConfiguredSandboxProvisioner = Effect.fnUntraced(function* () {
   const config = yield* ServerConfig;
   const projects = yield* ProjectionSnapshotQuery;
   const git = yield* GitVcsDriver;
+  const serverSettings = yield* ServerSettingsService;
   const github = yield* GitHubCli;
   const http = yield* HttpClient.HttpClient;
   const currentArtifact = yield* Effect.cachedWithTTL(
@@ -56,12 +59,19 @@ export const makeConfiguredSandboxProvisioner = Effect.fnUntraced(function* () {
       ),
     );
   const resolveSource: SandboxProvisioner["resolveSource"] = (input) =>
-    findProject(input.projectId).pipe(
-      Effect.flatMap((project) =>
-        resolveSandboxSource(project, input.branch, input.startFromOrigin === true),
-      ),
-      Effect.provideService(GitVcsDriver, git),
-    );
+    Effect.gen(function* () {
+      const project = yield* findProject(input.projectId);
+      const source = yield* resolveSandboxSource(
+        project,
+        input.branch,
+        input.startFromOrigin === true,
+      );
+      const scripts = yield* serverSettings.getSettings.pipe(
+        Effect.map((settings) => resolveProjectScripts(settings, project)),
+        Effect.orElseSucceed(() => []),
+      );
+      return scripts.length > 0 ? { ...source, projectScripts: scripts } : source;
+    }).pipe(Effect.provideService(GitVcsDriver, git));
   // Sandboxes run on your own account, so they share the host's GitHub login, the
   // token T3's GitHub calls already use here. A host without one launches unsigned.
   const gitHubCredential: SandboxProvisioner["gitHubCredential"] = (input) =>

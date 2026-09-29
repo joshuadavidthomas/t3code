@@ -12,6 +12,7 @@ import {
 import {
   ModelSelection,
   OrchestrationShellSnapshot,
+  ProjectScript,
   ProviderInteractionMode,
   RuntimeMode,
 } from "./orchestration.ts";
@@ -77,6 +78,9 @@ export const SandboxPinnedSource = Schema.Struct({
   projectTitle: Schema.optional(TrimmedNonEmptyString),
   /** Set when start from origin found the branch there, e.g. "origin/main". */
   remoteRef: Schema.optional(TrimmedNonEmptyString),
+  /** The launching project's actions, so the sandbox runs the same setup script a new
+   * worktree would. */
+  projectScripts: Schema.optional(Schema.Array(ProjectScript)),
   /** The project's Git identity, so commits made in the sandbox are the user's. */
   author: Schema.optional(
     Schema.Struct({ name: TrimmedNonEmptyString, email: TrimmedNonEmptyString }),

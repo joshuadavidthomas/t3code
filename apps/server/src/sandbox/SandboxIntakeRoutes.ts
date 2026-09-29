@@ -14,7 +14,9 @@ import {
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -22,9 +24,12 @@ import { EnvironmentAuth } from "../auth/EnvironmentAuth.ts";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
+import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import { ServerConfig } from "../config.ts";
 import { ProviderInstanceRegistryHydration } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
 import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
-import { readSandboxDeployment } from "./SandboxDeployment.ts";
+import { SANDBOX_SETUP_MADE_FILE, readSandboxDeployment } from "./SandboxDeployment.ts";
 import { makeSandboxIntake } from "./SandboxIntake.ts";
 import { makeSandboxRuntimeManifest } from "./SandboxRuntime.ts";
 
@@ -36,6 +41,45 @@ export interface SandboxLifecycle {
   readonly savable: Effect.Effect<OrchestrationShellSnapshot, SandboxSubmissionError>;
   readonly unarchive: (threadId: ThreadId) => Effect.Effect<void, SandboxSubmissionError>;
 }
+
+const unavailableThreads = () =>
+  new SandboxSubmissionError({ code: "unavailable", message: "Sandbox threads are unavailable." });
+
+/** Saving and restoring, from the sandbox's side. */
+export const makeSandboxLifecycle = (deps: {
+  readonly snapshots: ProjectionSnapshotQuery["Service"];
+  readonly dispatch: OrchestrationEngineService["Service"]["dispatch"];
+  readonly runSetup: (threadId: ThreadId, projectId: ProjectId) => Effect.Effect<void>;
+}): SandboxLifecycle => ({
+  savable: Effect.gen(function* () {
+    const active = yield* deps.snapshots.getShellSnapshot();
+    if (active.threads.length > 0)
+      return yield* new SandboxSubmissionError({
+        code: "conflict",
+        message: "This sandbox still has active threads.",
+      });
+    return yield* deps.snapshots.getArchivedShellSnapshot();
+  }).pipe(
+    Effect.mapError((error) =>
+      Schema.is(SandboxSubmissionError)(error) ? error : unavailableThreads(),
+    ),
+  ),
+  unarchive: (threadId) =>
+    Effect.gen(function* () {
+      const thread = yield* deps.snapshots.getThreadShellById(threadId);
+      // A retried restore finds the thread already back.
+      if (Option.isSome(thread) && thread.value.archivedAt === null) return;
+      yield* deps.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make(`sandbox-restore:${NodeCrypto.randomUUID()}`),
+        threadId,
+      });
+      // The save left out what setup made; running it again brings that back.
+      const restored = yield* deps.snapshots.getThreadShellById(threadId);
+      if (Option.isSome(restored))
+        yield* deps.runSetup(threadId, restored.value.projectId).pipe(Effect.forkDetach);
+    }).pipe(Effect.mapError(unavailableThreads)),
+});
 
 export const SandboxIntakeRequest = Schema.Struct({
   submission: SandboxSubmissionRecord,
@@ -139,9 +183,56 @@ export const sandboxIntakeRouteLayer = Layer.unwrap(
     const snapshots = yield* ProjectionSnapshotQuery;
     const settings = yield* ProviderInstanceRegistryHydration;
     const registry = yield* ProviderInstanceRegistry;
+    const setupScripts = yield* ProjectSetupScriptRunner;
+    const git = yield* GitVcsDriver;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig;
+    const root = deployment.workspaceRoot;
+    // What setup makes, it makes again on restore, so a save can leave it out.
+    const recordSetupMade = git
+      .execute({
+        operation: "sandbox.setupMade",
+        cwd: root,
+        args: ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+      })
+      .pipe(
+        Effect.flatMap((listed) =>
+          fs.writeFileString(path.join(config.stateDir, SANDBOX_SETUP_MADE_FILE), listed.stdout),
+        ),
+      );
+    // Like a new worktree: the agent waits only when the script asks it to.
+    const runSetup = (threadId: ThreadId, projectId: ProjectId) =>
+      setupScripts
+        .runForThread({
+          threadId,
+          projectId,
+          projectCwd: root,
+          worktreePath: root,
+          observeCompletion: {},
+        })
+        .pipe(
+          Effect.flatMap((started) => {
+            if (started.status !== "started" || !started.completion) return Effect.void;
+            const settled = started.completion.pipe(
+              Effect.flatMap(({ exitCode }) => (exitCode === 0 ? recordSetupMade : Effect.void)),
+              Effect.ignoreCause({ log: true }),
+            );
+            return started.async ? Effect.asVoid(Effect.forkDetach(settled)) : settled;
+          }),
+          Effect.ignoreCause({ log: true }),
+        );
     const runtime = makeSandboxRuntimeManifest(deployment.artifactIntegrity);
     const intake = yield* makeSandboxIntake({
       runtime,
+      // The project's actions come from the host, so its setup script runs here too.
+      prepareWorkspace: ({ threadId, projectId, scripts }) =>
+        (scripts.length === 0
+          ? Effect.void
+          : settings.updateSettings({
+              projectSettingsOverrides: { [projectId]: { defaultProjectScripts: scripts } },
+            })
+        ).pipe(Effect.ignoreCause({ log: true }), Effect.andThen(runSetup(threadId, projectId))),
       environmentId: yield* environment.getEnvironmentId,
       dispatch: engine.dispatch,
       applyProviderInstances: (providerInstances, selectedInstanceId) =>
@@ -171,11 +262,6 @@ export const sandboxIntakeRouteLayer = Layer.unwrap(
             ),
           ),
     });
-    const unavailable = () =>
-      new SandboxSubmissionError({
-        code: "unavailable",
-        message: "Sandbox threads are unavailable.",
-      });
     return makeSandboxIntakeRoutes(
       runtime,
       ({ submission, providerInstances }) =>
@@ -187,32 +273,7 @@ export const sandboxIntakeRouteLayer = Layer.unwrap(
             NodeCrypto.createHash("sha256").update(submission.input.commandId).digest("hex"),
           ),
         }),
-      {
-        savable: Effect.gen(function* () {
-          const active = yield* snapshots.getShellSnapshot();
-          if (active.threads.length > 0)
-            return yield* new SandboxSubmissionError({
-              code: "conflict",
-              message: "This sandbox still has active threads.",
-            });
-          return yield* snapshots.getArchivedShellSnapshot();
-        }).pipe(
-          Effect.mapError((error) =>
-            Schema.is(SandboxSubmissionError)(error) ? error : unavailable(),
-          ),
-        ),
-        unarchive: (threadId) =>
-          Effect.gen(function* () {
-            const thread = yield* snapshots.getThreadShellById(threadId);
-            // A retried restore finds the thread already back.
-            if (Option.isSome(thread) && thread.value.archivedAt === null) return;
-            yield* engine.dispatch({
-              type: "thread.unarchive",
-              commandId: CommandId.make(`sandbox-restore:${NodeCrypto.randomUUID()}`),
-              threadId,
-            });
-          }).pipe(Effect.mapError(unavailable)),
-      },
+      makeSandboxLifecycle({ snapshots, dispatch: engine.dispatch, runSetup }),
     );
   }),
 );

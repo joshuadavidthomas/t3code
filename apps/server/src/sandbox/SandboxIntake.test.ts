@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { HttpRouter } from "effect/unstable/http";
@@ -27,6 +28,7 @@ import { EnvironmentAuth, ServerAuthMissingCredentialError } from "../auth/Envir
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
@@ -38,7 +40,7 @@ import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolv
 import * as ServerConfig from "../config.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
 import { makeSandboxIntake } from "./SandboxIntake.ts";
-import { makeSandboxIntakeRoutes } from "./SandboxIntakeRoutes.ts";
+import { makeSandboxIntakeRoutes, makeSandboxLifecycle } from "./SandboxIntakeRoutes.ts";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
@@ -120,13 +122,68 @@ const engineLayer = OrchestrationEngineLive.pipe(
   Layer.provide(NodeServices.layer),
 );
 
+// The same engine, with the snapshot query exposed for the save and restore side.
+const lifecycleLayer = OrchestrationEngineLive.pipe(
+  Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
+  Layer.provide(OrchestrationProjectionPipelineLive),
+  Layer.provide(ThreadBackgroundLiveness.layer),
+  Layer.provide(ThreadPlanProgress.layer),
+  Layer.provide(OrchestrationEventStoreLive),
+  Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+  Layer.provide(RepositoryIdentityResolver.layer),
+  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "sandbox-lifecycle-" })),
+  Layer.provide(NodeServices.layer),
+);
+
 describe("SandboxIntake", () => {
+  it.effect("saves only once every thread is archived and restores one with its setup", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshots = yield* ProjectionSnapshotQuery;
+      const intake = yield* makeSandboxIntake({
+        prepareWorkspace: () => Effect.void,
+        runtime,
+        environmentId: EnvironmentId.make("destination"),
+        applyProviderInstances: () => Effect.void,
+        dispatch: engine.dispatch,
+      });
+      yield* intake.accept(input);
+      const setups: string[] = [];
+      const lifecycle = makeSandboxLifecycle({
+        snapshots,
+        dispatch: engine.dispatch,
+        runSetup: (threadId, projectId) =>
+          Effect.sync(() => void setups.push(`${threadId}:${projectId}`)),
+      });
+      const threadId = submission.input.threadId;
+      assert.strictEqual((yield* Effect.flip(lifecycle.savable)).code, "conflict");
+      yield* engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("archive"),
+        threadId,
+      });
+      assert.deepStrictEqual(
+        (yield* lifecycle.savable).threads.map((thread) => thread.id),
+        [threadId],
+      );
+      yield* lifecycle.unarchive(threadId);
+      yield* lifecycle.unarchive(threadId);
+      yield* Effect.yieldNow;
+      const restored = yield* snapshots.getThreadShellById(threadId);
+      assert.strictEqual(Option.getOrThrow(restored).archivedAt, null);
+      // Setup runs once, for the restored thread's project; a retry finds it done.
+      assert.deepStrictEqual(setups, [`${threadId}:${input.projectId}`]);
+    }).pipe(Effect.provide(lifecycleLayer)),
+  );
+
   it.effect("does not dispatch commands until provider application completes", () =>
     Effect.gen(function* () {
       const applying = yield* Deferred.make<void>();
       const ready = yield* Deferred.make<void>();
       const commands: string[] = [];
       const intake = yield* makeSandboxIntake({
+        prepareWorkspace: () => Effect.void,
         runtime,
         environmentId: EnvironmentId.make("destination"),
         applyProviderInstances: () =>
@@ -163,6 +220,7 @@ describe("SandboxIntake", () => {
           providers: runtime.providers.map((provider) => ({ ...provider, driver: claude })),
         };
         const intake = yield* makeSandboxIntake({
+          prepareWorkspace: () => Effect.void,
           runtime: destinationRuntime,
           environmentId: EnvironmentId.make("destination"),
           applyProviderInstances: () =>
@@ -198,6 +256,7 @@ describe("SandboxIntake", () => {
     Effect.gen(function* () {
       const dispatched: string[] = [];
       const intake = yield* makeSandboxIntake({
+        prepareWorkspace: () => Effect.sync(() => void dispatched.push("setup")),
         runtime,
         environmentId: EnvironmentId.make("destination"),
         applyProviderInstances: () => Effect.void,
@@ -275,10 +334,12 @@ describe("SandboxIntake", () => {
         projectId: input.projectId,
         threadId: submission.input.threadId,
       });
+      // The project's setup script runs before the first turn, as for a new worktree.
       assert.deepStrictEqual(dispatched, [
         "project.create",
         "thread.create",
         "thread.message.user.append",
+        "setup",
         "thread.turn.start",
       ]);
       // Saving reports why it can't, and restoring needs operate access.
@@ -323,6 +384,7 @@ describe("SandboxIntake", () => {
       }) satisfies OrchestrationEngineShape["dispatch"];
       let applied = 0;
       const intake = yield* makeSandboxIntake({
+        prepareWorkspace: () => Effect.void,
         runtime,
         environmentId: EnvironmentId.make("environment-1"),
         applyProviderInstances: () => Effect.sync(() => void applied++),
@@ -379,6 +441,7 @@ describe("SandboxIntake", () => {
     Effect.gen(function* () {
       let sideEffects = 0;
       const intake = yield* makeSandboxIntake({
+        prepareWorkspace: () => Effect.void,
         runtime: { ...runtime, artifactIntegrity: "different" },
         environmentId: EnvironmentId.make("environment-1"),
         applyProviderInstances: () => Effect.sync(() => void sideEffects++),
@@ -395,6 +458,7 @@ describe("SandboxIntake", () => {
     Effect.gen(function* () {
       let sideEffects = 0;
       const intake = yield* makeSandboxIntake({
+        prepareWorkspace: () => Effect.void,
         runtime,
         environmentId: EnvironmentId.make("environment-1"),
         applyProviderInstances: () => Effect.sync(() => void sideEffects++),
@@ -422,6 +486,7 @@ describe("SandboxIntake", () => {
         const engine = yield* OrchestrationEngineService;
         let loseAck = true;
         const deps = {
+          prepareWorkspace: () => Effect.void,
           runtime,
           environmentId: EnvironmentId.make("destination"),
           applyProviderInstances: () => Effect.void,
@@ -464,6 +529,7 @@ describe("SandboxIntake", () => {
       Effect.gen(function* () {
         let writes = 0;
         const deps = {
+          prepareWorkspace: () => Effect.void,
           runtime,
           environmentId: EnvironmentId.make("destination"),
           applyProviderInstances: () =>

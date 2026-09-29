@@ -32,8 +32,9 @@ store. Settling its thread keeps it as it is. Archiving the last thread in a
 sandbox saves the sandbox to the machine that launched it and deletes it.
 Unarchiving that thread from **Settings → Archived threads**, on web or desktop,
 restores the sandbox with its conversation and files, including uncommitted
-changes. Dependency folders such as `node_modules` aren't saved, so reinstall
-them.
+and ignored files. What your project's setup script makes, such as installed
+dependencies, isn't saved; restoring runs the script again, as creating a
+sandbox does.
 
 Deleting the last thread in a sandbox offers to delete the sandbox too; with
 **Delete worktrees with deleted threads** on, it's deleted without asking once

@@ -8,6 +8,10 @@ import { ServerConfig } from "../config.ts";
  * providers derive their transcript locations from, survive moving to another sandbox. */
 export const SANDBOX_WORKSPACE_ROOT = "/workspace";
 
+/** In the state directory: the ignored paths that existed right after the project's setup
+ * script ran, which a save leaves out because running setup again makes them. */
+export const SANDBOX_SETUP_MADE_FILE = "sandbox-setup-made";
+
 /** Written by the provisioner alongside the destination's settings before startup. */
 export const SandboxDeployment = Schema.Struct({
   artifactIntegrity: Schema.String.check(Schema.isPattern(/^sha256-[a-f0-9]{64}$/)),
