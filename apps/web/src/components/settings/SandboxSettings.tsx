@@ -4,9 +4,10 @@ import {
   type SandboxConfiguration,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { EllipsisIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, EllipsisIcon, PlusIcon } from "lucide-react";
 import { useId, useState } from "react";
 import { requestConfirmDialog } from "~/confirmDialog";
+import { cn } from "~/lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
@@ -53,14 +54,40 @@ export function useSandboxConfiguration(environmentId: EnvironmentId | null, ena
   };
 }
 
+/** Shows or hides the sandboxes folded under an account, like an expandable Source Control row. */
+export function SandboxFoldButton({
+  label,
+  expanded,
+  onToggle,
+}: {
+  label: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Button
+      size="icon-xs"
+      variant="ghost-muted"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      aria-label={`Toggle ${label} sandboxes`}
+    >
+      <ChevronDownIcon className={cn("size-3.5 transition-transform", expanded && "rotate-180")} />
+    </Button>
+  );
+}
+
 export function SandboxRegistrationRow({
   environmentId,
   configuration,
   onEdit,
+  sandboxes,
 }: {
   environmentId: EnvironmentId;
   configuration: SandboxConfiguration;
   onEdit: () => void;
+  /** The sandboxes it made, folded under it; null when it has none. */
+  sandboxes: { summary: string; expanded: boolean; onToggle: () => void } | null;
 }) {
   const verify = useAtomCommand(serverEnvironment.verifySandboxConfiguration, {
     reportFailure: false,
@@ -112,10 +139,11 @@ export function SandboxRegistrationRow({
         }
         subtitle={
           <span className={error ? "block truncate text-destructive" : "block truncate"}>
-            {providerLabel} · {status}
+            {[providerLabel, status, sandboxes?.summary].filter(Boolean).join(" · ")}
           </span>
         }
       >
+        {sandboxes ? <SandboxFoldButton label={configuration.name} {...sandboxes} /> : null}
         <Menu>
           <MenuTrigger
             render={

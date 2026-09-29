@@ -30,14 +30,18 @@ vi.mock("~/state/query", () => ({
 vi.mock("~/state/entities", () => ({ useThreadShells: () => [] }));
 vi.mock("~/connection/catalog", () => ({ environmentCatalog: { setEnabled: "enable" } }));
 vi.mock("./SandboxSettings", () => ({
-  SandboxRegistrationRow: ({ configuration }: { configuration: { name: string } }) => (
-    <p>{configuration.name}</p>
-  ),
+  SandboxRegistrationRow: ({
+    configuration,
+    sandboxes,
+  }: {
+    configuration: { name: string };
+    sandboxes: { summary: string } | null;
+  }) => <p>{`${configuration.name}: ${sandboxes?.summary ?? "none"}`}</p>,
+  SandboxFoldButton: () => null,
   EditSandboxConfigurationDialog: () => null,
 }));
 vi.mock("../ui/collapsible", () => ({
   Collapsible: ({ children }: { children: ReactNode }) => children,
-  CollapsibleTrigger: ({ children }: { children: ReactNode }) => <p>{children}</p>,
   CollapsiblePanel: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock("./settingsLayout", () => ({ SettingsRow: () => null }));
@@ -81,6 +85,7 @@ import {
   canPairSandboxDestinations,
   sandboxBadge,
   sandboxResourceStatus,
+  sortSandboxEntries,
 } from "./SandboxResourceRows";
 
 const environment = {
@@ -212,9 +217,9 @@ describe("sandbox resource actions", () => {
   });
 
   it("lists each sandbox under the account that made it, and keeps a removed account's", async () => {
-    const sandbox = (id: string, configurationId: string) => ({
+    const sandbox = (id: string, configurationId: string, startedAt: string) => ({
       input: { commandId: id, title: id, configurationId },
-      progress: { phase: "failed", error: null },
+      progress: { phase: "failed", error: null, startedAt, endedAt: null },
       intakeStarted: true,
       destination: null,
       deletedAt: null,
@@ -225,10 +230,10 @@ describe("sandbox resource actions", () => {
       { id: "work", name: "Work" },
     ];
     state.submissions = [
-      sandbox("one", "personal"),
-      sandbox("two", "work"),
-      sandbox("three", "personal"),
-      sandbox("four", "gone"),
+      sandbox("three", "personal", "2026-09-28T00:00:00Z"),
+      sandbox("two", "work", "2026-09-28T00:00:00Z"),
+      sandbox("one", "personal", "2026-09-29T00:00:00Z"),
+      sandbox("four", "gone", "2026-09-28T00:00:00Z"),
     ];
     state.environments = [
       {
@@ -248,16 +253,41 @@ describe("sandbox resource actions", () => {
       .findAll((node) => node.type === "p" && node.parent?.type !== "p")
       .map(text);
     expect(lines).toEqual([
-      "Personal",
-      "2 sandboxes · 2 failed",
+      "Personal: 2 sandboxes",
       "oneFailed",
       "threeFailed",
-      "Work",
-      "1 sandbox · 1 failed",
+      "Work: 1 sandbox",
       "twoFailed",
-      "From removed accounts1 sandbox · 1 failed",
+      "From removed accounts",
       "fourFailed",
     ]);
     await act(async () => renderer.unmount());
+  });
+
+  it("sorts active sandboxes first, then settled, each most recently active first", () => {
+    const entry = (id: string, label: string | null, lastActiveAt: string) => ({
+      id,
+      badge: label ? { label, variant: "info" as const } : null,
+      lastActiveAt,
+    });
+    expect(
+      sortSandboxEntries([
+        entry("archived", "Archived", "2026-09-29T05:00:00Z"),
+        entry("settled-old", "Settled", "2026-09-20T00:00:00Z"),
+        entry("unknown", null, "2026-09-29T04:00:00Z"),
+        entry("active-old", "Active", "2026-09-21T00:00:00Z"),
+        entry("settled-new", "Settled", "2026-09-28T00:00:00Z"),
+        entry("setting-up", "Setting up", "2026-09-29T03:00:00Z"),
+        entry("active-new", "Active", "2026-09-29T01:00:00Z"),
+      ]).map(({ id }) => id),
+    ).toEqual([
+      "setting-up",
+      "active-new",
+      "active-old",
+      "settled-new",
+      "settled-old",
+      "unknown",
+      "archived",
+    ]);
   });
 });

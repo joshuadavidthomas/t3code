@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
+import { EllipsisIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -32,12 +32,16 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import { Collapsible, CollapsiblePanel } from "../ui/collapsible";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { EnvironmentRow, savedBackendStatus } from "./EnvironmentRow";
-import { EditSandboxConfigurationDialog, SandboxRegistrationRow } from "./SandboxSettings";
+import {
+  EditSandboxConfigurationDialog,
+  SandboxFoldButton,
+  SandboxRegistrationRow,
+} from "./SandboxSettings";
 import { SettingsRow } from "./settingsLayout";
 
 export function canOperateSandboxResources(
@@ -133,17 +137,6 @@ export function sandboxBadge(
         : { label: "Settled", variant: "secondary" };
   }
 }
-
-// The order a folded list counts them in: what needs attention first.
-const SANDBOX_BADGE_ORDER = [
-  "Failed",
-  "Setting up",
-  "Cancelling",
-  "Restoring",
-  "Active",
-  "Settled",
-  "Archived",
-];
 
 /** Environments that are sandboxes a connected host launched. They're listed under
  * the account that made them rather than with the machines. */
@@ -260,23 +253,81 @@ function SandboxHostAccounts({
     submissions.refresh();
     setPending(null);
   };
-  const list = (key: string, members: ReadonlyArray<SandboxSubmission>, title?: string) =>
+  const { environments } = useEnvironments();
+  const shells = useThreadShells();
+  const setEnabled = useAtomCommand(environmentCatalog.setEnabled, { reportFailure: false });
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const entries = sortSandboxEntries(
+    sandboxes.map((submission): SandboxEntry => {
+      const destination = submission.destination?.environmentId ?? null;
+      const here = destination
+        ? (environments.find((candidate) => candidate.environmentId === destination) ?? null)
+        : null;
+      const threads =
+        here?.connection.phase === "connected"
+          ? shells.filter(
+              (thread) => thread.environmentId === destination && thread.archivedAt === null,
+            )
+          : null;
+      return {
+        submission,
+        here,
+        badge: sandboxBadge(submission, threads),
+        lastActiveAt: [
+          submission.progress.endedAt ?? submission.progress.startedAt,
+          ...(threads ?? []).map((thread) => thread.updatedAt),
+        ].reduce((latest, at) => (at > latest ? at : latest)),
+      };
+    }),
+  );
+  // Folded by default, so an account with a hundred sandboxes stays one row.
+  const fold = (key: string, members: ReadonlyArray<SandboxEntry>) =>
+    members.length === 0
+      ? null
+      : {
+          summary: sandboxCount(members.length),
+          expanded: expanded.has(key),
+          onToggle: () =>
+            setExpanded((current) => {
+              const next = new Set(current);
+              if (!next.delete(key)) next.add(key);
+              return next;
+            }),
+        };
+  const list = (key: string, members: ReadonlyArray<SandboxEntry>) =>
     members.length === 0 ? null : (
-      <SandboxList
-        key={`sandboxes:${key}`}
-        {...(title ? { title } : {})}
-        sandboxes={members}
-        canOperate={canOperate}
-        canPair={canPair}
-        pending={pending}
-        errors={errors}
-        onRun={(submission, action) => void run(submission, action)}
-      />
+      <Collapsible key={`sandboxes:${key}`} open={expanded.has(key)}>
+        <CollapsiblePanel>
+          <div className="[&>*+*]:border-t [&>*+*]:border-border/50">
+            {members.map(({ submission, here, badge }) => (
+              <SandboxRow
+                key={submission.input.commandId}
+                submission={submission}
+                here={here}
+                badge={badge}
+                canOperate={canOperate}
+                canPair={canPair}
+                busy={pending !== null}
+                connecting={
+                  pending?.commandId === submission.input.commandId && pending.action === "connect"
+                }
+                error={errors[submission.input.commandId] ?? ""}
+                onRun={(target, action) => void run(target, action)}
+                onSetEnabled={(environmentId, enabled) =>
+                  void setEnabled({ environmentId, enabled })
+                }
+              />
+            ))}
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
     );
   // Sandboxes outlive the account that made them; removing it keeps them.
-  const orphans = sandboxes.filter(
-    (submission) => !accounts.some((account) => account.id === submission.input.configurationId),
+  const orphans = entries.filter(
+    ({ submission }) =>
+      !accounts.some((account) => account.id === submission.input.configurationId),
   );
+  const orphanFold = fold("orphans", orphans);
   return (
     <>
       {configurations.error ? (
@@ -296,19 +347,29 @@ function SandboxHostAccounts({
           }
         />
       ) : null}
-      {accounts.flatMap((account) => [
-        <SandboxRegistrationRow
-          key={account.id}
-          environmentId={environment.environmentId}
-          configuration={account}
-          onEdit={() => setEditing(account.id)}
-        />,
-        list(
-          account.id,
-          sandboxes.filter((submission) => submission.input.configurationId === account.id),
-        ),
-      ])}
-      {configurations.isSuccess ? list("orphans", orphans, "From removed accounts") : null}
+      {accounts.flatMap((account) => {
+        const members = entries.filter(
+          ({ submission }) => submission.input.configurationId === account.id,
+        );
+        return [
+          <SandboxRegistrationRow
+            key={account.id}
+            environmentId={environment.environmentId}
+            configuration={account}
+            onEdit={() => setEditing(account.id)}
+            sandboxes={fold(account.id, members)}
+          />,
+          list(account.id, members),
+        ];
+      })}
+      {configurations.isSuccess && orphanFold ? (
+        <>
+          <EnvironmentRow kind="cloud" label="From removed accounts" subtitle={orphanFold.summary}>
+            <SandboxFoldButton label="From removed accounts" {...orphanFold} />
+          </EnvironmentRow>
+          {list("orphans", orphans)}
+        </>
+      ) : null}
       <EditSandboxConfigurationDialog
         environmentId={environment.environmentId}
         configuration={accounts.find((account) => account.id === editing) ?? null}
@@ -318,85 +379,32 @@ function SandboxHostAccounts({
   );
 }
 
-/** An account's sandboxes, folded so a long list stays out of the way. */
-function SandboxList({
-  title,
-  sandboxes,
-  canOperate,
-  canPair,
-  pending,
-  errors,
-  onRun,
-}: {
-  /** Names the group when no account row above it does. */
-  title?: string;
-  sandboxes: ReadonlyArray<SandboxSubmission>;
-  canOperate: boolean;
-  canPair: boolean;
-  pending: { commandId: string; action: string } | null;
-  errors: Record<string, string>;
-  onRun: (submission: SandboxSubmission, action: SandboxAction) => void;
-}) {
-  const { environments } = useEnvironments();
-  const shells = useThreadShells();
-  const setEnabled = useAtomCommand(environmentCatalog.setEnabled, { reportFailure: false });
-  const [open, setOpen] = useState(false);
-  const rows = sandboxes.map((submission) => {
-    const destination = submission.destination?.environmentId ?? null;
-    const here = destination
-      ? (environments.find((environment) => environment.environmentId === destination) ?? null)
-      : null;
-    const threads =
-      here?.connection.phase === "connected"
-        ? shells.filter(
-            (thread) => thread.environmentId === destination && thread.archivedAt === null,
-          )
-        : null;
-    return { submission, here, badge: sandboxBadge(submission, threads) };
-  });
-  const summary = [
-    `${sandboxes.length} ${sandboxes.length === 1 ? "sandbox" : "sandboxes"}`,
-    ...SANDBOX_BADGE_ORDER.flatMap((label) => {
-      const count = rows.filter((row) => row.badge?.label === label).length;
-      return count > 0 ? [`${count} ${label.toLowerCase()}`] : [];
-    }),
-  ].join(" · ");
-  return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex min-h-9 w-full min-w-0 items-center gap-2 py-2 pr-3 pl-10 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring sm:pr-4 sm:pl-11">
-        <ChevronRightIcon
-          aria-hidden
-          className={cn(
-            "size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
-            open && "rotate-90",
-          )}
-        />
-        {title ? <span className="shrink-0 text-xs font-medium">{title}</span> : null}
-        <span className="min-w-0 truncate text-xs text-muted-foreground">{summary}</span>
-      </CollapsibleTrigger>
-      <CollapsiblePanel>
-        <div className="[&>*]:border-t [&>*]:border-border/50">
-          {rows.map(({ submission, here, badge }) => (
-            <SandboxRow
-              key={submission.input.commandId}
-              submission={submission}
-              here={here}
-              badge={badge}
-              canOperate={canOperate}
-              canPair={canPair}
-              busy={pending !== null}
-              connecting={
-                pending?.commandId === submission.input.commandId && pending.action === "connect"
-              }
-              error={errors[submission.input.commandId] ?? ""}
-              onRun={onRun}
-              onSetEnabled={(environmentId, enabled) => void setEnabled({ environmentId, enabled })}
-            />
-          ))}
-        </div>
-      </CollapsiblePanel>
-    </Collapsible>
+type SandboxEntry = {
+  readonly submission: SandboxSubmission;
+  /** This device's connection to it, once paired. */
+  readonly here: EnvironmentPresentation | null;
+  readonly badge: SandboxBadge | null;
+  readonly lastActiveAt: string;
+};
+
+/**
+ * Active first, then settled, each most recently active first. Launches in progress
+ * and failed ones count as active; sandboxes whose threads this device can't see
+ * come next, and archived ones last.
+ */
+export function sortSandboxEntries<T extends Pick<SandboxEntry, "badge" | "lastActiveAt">>(
+  entries: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  const rank = ({ badge }: T) =>
+    badge === null ? 2 : badge.label === "Settled" ? 1 : badge.label === "Archived" ? 3 : 0;
+  return entries.toSorted(
+    (left, right) =>
+      rank(left) - rank(right) || right.lastActiveAt.localeCompare(left.lastActiveAt),
   );
+}
+
+function sandboxCount(count: number) {
+  return `${count} ${count === 1 ? "sandbox" : "sandboxes"}`;
 }
 
 /** One sandbox: what the host knows about it, and this device's connection to it. */
